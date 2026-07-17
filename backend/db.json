@@ -1,0 +1,103 @@
+{
+  "hospitals": [
+    {
+      "id": "hosp-1",
+      "name": "KLES Dr. Prabhakar Kore Hospital",
+      "lat": 15.8828,
+      "lng": 74.5242,
+      "has_trauma": true,
+      "has_cardiac": true,
+      "icu_beds": 11,
+      "total_beds": 150,
+      "description": "Super-specialty medical center in Nehru Nagar, Belagavi. Advanced cardiac and level-1 trauma care."
+    },
+    {
+      "id": "hosp-2",
+      "name": "Lakeview Hospital",
+      "lat": 15.8512,
+      "lng": 74.5122,
+      "has_trauma": false,
+      "has_cardiac": true,
+      "icu_beds": 2,
+      "total_beds": 80,
+      "description": "Multi-specialty hospital near Fort Road. Dedicated cardiology care and intensive care units."
+    },
+    {
+      "id": "hosp-3",
+      "name": "BIMS District Hospital",
+      "lat": 15.8566,
+      "lng": 74.5097,
+      "has_trauma": true,
+      "has_cardiac": false,
+      "icu_beds": 0,
+      "total_beds": 200,
+      "description": "Government medical college & district hospital. Large trauma ward, current ICU beds at capacity."
+    },
+    {
+      "id": "hosp-4",
+      "name": "Apex Hospital Belagavi",
+      "lat": 15.8672,
+      "lng": 74.5015,
+      "has_trauma": false,
+      "has_cardiac": false,
+      "icu_beds": 2,
+      "total_beds": 60,
+      "description": "Community general hospital providing emergency assessment and family healthcare."
+    }
+  ],
+  "ambulances": [
+    {
+      "id": "amb-1",
+      "callsign": "Rescue 101",
+      "status": "idle",
+      "lat": 15.859,
+      "lng": 74.502,
+      "speed": 0,
+      "heading": 0,
+      "current_trip_id": null
+    },
+    {
+      "id": "amb-2",
+      "callsign": "Medic 205",
+      "status": "idle",
+      "lat": 15.872,
+      "lng": 74.515,
+      "speed": 0,
+      "heading": 0,
+      "current_trip_id": null
+    },
+    {
+      "id": "amb-3",
+      "callsign": "Trauma 309",
+      "status": "idle",
+      "lat": 15.845,
+      "lng": 74.492,
+      "speed": 0,
+      "heading": 0,
+      "current_trip_id": null
+    },
+    {
+      "id": "amb-4",
+      "callsign": "Rapid 402",
+      "status": "idle",
+      "lat": 15.891,
+      "lng": 74.532,
+      "speed": 0,
+      "heading": 0,
+      "current_trip_id": null
+    },
+    {
+      "id": "amb-5",
+      "callsign": "LifeGuard 5",
+      "status": "idle",
+      "lat": 15.832,
+      "lng": 74.511,
+      "speed": 0,
+      "heading": 0,
+      "current_trip_id": null
+    }
+  ],
+  "trips": [],
+  "vitals_logs": [],
+  "triage_results": []
+}
