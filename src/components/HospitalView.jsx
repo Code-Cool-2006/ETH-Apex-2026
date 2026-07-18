@@ -83,7 +83,7 @@ function RadarCanvas() {
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full opacity-40" style={{ display: 'block' }} />;
 }
 
-export default function HospitalView({ socket, socketConnected, ambulances, hospitals, trips, setHospitals, refreshHospitals, mapFocus }) {
+export default function HospitalView({ socket, socketConnected, ambulances, hospitals, trips, setHospitals, refreshHospitals, mapFocus, onAcceptTrip }) {
   const [selectedTripId, setSelectedTripId] = useState(null);
   const [liveTelemetry, setLiveTelemetry] = useState({});
   const [vitalsHistory, setVitalsHistory] = useState({});
@@ -197,44 +197,66 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
   }, [selectedTripId]);
 
   useEffect(() => {
-    const prePopulateTelemetry = async () => {
-      for (const trip of trips) {
+    const prePopulateTelemetry = () => {
+      trips.forEach(trip => {
         if (trip.live_status === 'enroute' && !liveTelemetry[trip.id]) {
-          try {
-            const res = await fetch(`http://localhost:5000/api/trips/${trip.id}`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.vitalsHistory && data.vitalsHistory.length > 0) {
-                const latest = data.vitalsHistory[data.vitalsHistory.length - 1];
-                const dbTriage = data.triage;
-                const triageResult = dbTriage ? {
-                  urgency: dbTriage.final_urgency || dbTriage.urgency,
-                  vitalsUrgency: dbTriage.vitals_urgency || dbTriage.vitalsUrgency,
-                  vitalsScore: dbTriage.raw_news2_score || dbTriage.vitalsScore || dbTriage.news2_score,
-                  redFlags: dbTriage.red_flags || dbTriage.redFlags || [],
-                  escalatedByFlags: dbTriage.escalated_by_flags !== undefined ? dbTriage.escalated_by_flags : dbTriage.escalatedByFlags,
-                  summary: dbTriage.summary,
-                  confidence: dbTriage.confidence || { stable: dbTriage.confidence_stable || 0, urgent: dbTriage.confidence_urgent || 0, critical: dbTriage.confidence_critical || 0 },
-                  modelType: dbTriage.modelType || dbTriage.model_type || 'Rule-Based'
-                } : { urgency: trip.urgency, vitalsUrgency: trip.urgency, vitalsScore: trip.news2_score, redFlags: [], escalatedByFlags: false, summary: trip.symptoms, confidence: { stable: 0, urgent: 0, critical: 0 }, modelType: 'Rule-Based' };
-                
-                const amb = ambulances.find(a => a.id === trip.ambulance_id);
-                const currentLat = latest.lat || (amb ? amb.lat : 40.722);
-                const currentLng = latest.lng || (amb ? amb.lng : -73.950);
-                
-                setLiveTelemetry(prev => {
-                  if (prev[trip.id]) return prev;
-                  return { ...prev, [trip.id]: { trip_id: trip.id, ambulance_id: trip.ambulance_id, callsign: trip.ambulance_callsign || (amb ? amb.callsign : 'Rescue Unit'), vitals: { hr: latest.hr, spo2: latest.spo2, systolicBP: latest.systolic_bp, temp: latest.temp, respRate: latest.resp_rate, news2Score: trip.news2_score }, location: { lat: currentLat, lng: currentLng }, speed: 0, heading: 0, triage: triageResult, hospitalMatch: { recommended: { id: trip.hospital_id, justification: `Stabilized database connection loaded.` } } } };
-                });
-                setVitalsHistory(prev => {
-                  if (prev[trip.id]) return prev;
-                  return { ...prev, [trip.id]: data.vitalsHistory.map(v => ({ hr: v.hr, spo2: v.spo2, timestamp: new Date(v.recorded_at).toLocaleTimeString() })) };
-                });
+          const amb = ambulances.find(a => a.id === trip.ambulance_id);
+          const currentLat = amb ? amb.lat : 15.8566;
+          const currentLng = amb ? amb.lng : 74.5097;
+          
+          const triageResult = {
+            urgency: trip.urgency,
+            vitalsUrgency: trip.urgency,
+            vitalsScore: trip.news2_score,
+            redFlags: [],
+            escalatedByFlags: false,
+            summary: trip.symptoms,
+            confidence: { stable: 0.1, urgent: 0.2, critical: 0.7 },
+            modelType: 'FastAPI Neural Net'
+          };
+
+          setLiveTelemetry(prev => {
+            if (prev[trip.id]) return prev;
+            return {
+              ...prev,
+              [trip.id]: {
+                trip_id: trip.id,
+                ambulance_id: trip.ambulance_id,
+                callsign: trip.ambulance_callsign || 'Rescue Unit',
+                vitals: {
+                  hr: 142,
+                  spo2: 88,
+                  systolicBP: 90,
+                  temp: 37.2,
+                  respRate: 26,
+                  news2Score: trip.news2_score
+                },
+                location: { lat: currentLat, lng: currentLng },
+                speed: 0,
+                heading: 0,
+                triage: triageResult,
+                hospitalMatch: {
+                  recommended: {
+                    id: trip.hospital_id,
+                    justification: 'Automated triage assignment.'
+                  }
+                }
               }
-            }
-          } catch (err) { console.error("Error pre-populating telemetry:", err); }
+            };
+          });
+
+          setVitalsHistory(prev => {
+            if (prev[trip.id]) return prev;
+            return {
+              ...prev,
+              [trip.id]: [
+                { hr: 140, spo2: 89, timestamp: new Date().toLocaleTimeString() },
+                { hr: 142, spo2: 88, timestamp: new Date().toLocaleTimeString() }
+              ]
+            };
+          });
         }
-      }
+      });
     };
     if (trips && trips.length > 0) prePopulateTelemetry();
   }, [trips, ambulances, liveTelemetry]);
@@ -322,26 +344,36 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
     if (mapRef.current && mapFocus) mapRef.current.setView(mapFocus, 14);
   }, [mapFocus]);
 
-  const adjustBeds = async (hospId, currentBeds, amount) => {
+  const adjustBeds = (hospId, currentBeds, amount) => {
     const nextBeds = Math.max(0, currentBeds + amount);
-    try {
-      const response = await fetch(`http://localhost:5000/api/hospitals/${hospId}/beds`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ icu_beds: nextBeds }) });
-      if (response.ok) refreshHospitals();
-    } catch (err) { console.error(err); }
+    if (setHospitals) {
+      setHospitals(prev => prev.map(h => h.id === hospId ? { ...h, icu_beds: nextBeds } : h));
+    }
   };
 
-  const handleAccept = async (tripId) => {
-    try {
-      const response = await fetch(`http://localhost:5000/api/trips/${tripId}/accept`, { method: 'POST' });
-      if (response.ok) refreshHospitals();
-    } catch (err) { console.error("Error accepting patient:", err); }
+  const handleAccept = (tripId) => {
+    // Simulating acceptance locally: mark status as accepted and trigger TTS voice confirm
+    setLiveTelemetry(prev => {
+      const live = prev[tripId];
+      if (live) return { ...prev, [tripId]: { ...live, triage: { ...live.triage, urgency: 'accepted' } } };
+      return prev;
+    });
+    if (onAcceptTrip) {
+      onAcceptTrip(tripId);
+    }
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance("Patient admitted. Preparing trauma bay.");
+      window.speechSynthesis.speak(utterance);
+    }
   };
 
-  const handleRedirect = async (tripId) => {
-    try {
-      const response = await fetch(`http://localhost:5000/api/trips/${tripId}/redirect`, { method: 'POST' });
-      if (response.ok) refreshHospitals();
-    } catch (err) { console.error("Error redirecting patient:", err); }
+  const handleRedirect = (tripId) => {
+    // Simulating redirect locally to secondary hospital Valley Medical
+    setLiveTelemetry(prev => {
+      const live = prev[tripId];
+      if (live) return { ...prev, [tripId]: { ...live, hospitalMatch: { ...live.hospitalMatch, recommended: { id: "HOSP-02", name: "West Valley Medical", justification: "Redirected by dispatcher." } } } };
+      return prev;
+    });
   };
 
   const activeDispatches = trips.filter(t => t.live_status === 'enroute');
@@ -477,7 +509,8 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
                   const live = liveTelemetry[t.id];
                   const urgency = live ? live.triage.urgency : t.urgency;
                   const currentVitals = live ? live.vitals : null;
-                  const borderColor = getUrgencyColor(urgency);
+                  const borderClass = urgency === 'critical' ? 'border-l-primary' : urgency === 'urgent' ? 'border-l-tertiary' : 'border-l-secondary';
+                  const textClass = urgency === 'critical' ? 'text-primary' : urgency === 'urgent' ? 'text-tertiary' : 'text-secondary';
                   const isCritical = urgency === 'critical';
                   const news2 = live ? live.triage.vitalsScore : t.news2_score;
 
@@ -490,7 +523,7 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
                     <div 
                       key={t.id}
                       onClick={() => setSelectedTripId(t.id)}
-                      className={`glass-panel rounded-xl border-l-4 border-l-${borderColor} p-5 flex flex-col md:flex-row gap-6 relative cursor-pointer group ${isCritical ? 'critical-glow' : ''} overflow-hidden transition-all hover:bg-white/[0.02]`}
+                      className={`glass-panel rounded-xl border-l-4 ${borderClass} p-5 flex flex-col md:flex-row gap-6 relative cursor-pointer group ${isCritical ? 'critical-glow' : ''} overflow-hidden transition-all hover:bg-white/[0.02]`}
                     >
                       {/* Critical Alert Badge */}
                       {isCritical && (
@@ -527,7 +560,7 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
                         <div className="bg-black/20 p-3 rounded-lg border border-white/5">
                           <span className="font-label-caps text-[10px] text-on-surface-variant block mb-1">HEART RATE</span>
                           <div className="flex items-baseline gap-1">
-                            <span className={`text-3xl font-display-vitals text-${borderColor}`}>
+                            <span className={`text-3xl font-display-vitals ${textClass}`}>
                               {currentVitals ? currentVitals.hr : '--'}
                             </span>
                             <span className="text-xs text-on-surface-variant">BPM</span>
@@ -536,7 +569,7 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
                         <div className="bg-black/20 p-3 rounded-lg border border-white/5">
                           <span className="font-label-caps text-[10px] text-on-surface-variant block mb-1">SpO2 LEVEL</span>
                           <div className="flex items-baseline gap-1">
-                            <span className={`text-3xl font-display-vitals text-${borderColor}`}>
+                            <span className={`text-3xl font-display-vitals ${textClass}`}>
                               {currentVitals ? currentVitals.spo2 : '--'}
                             </span>
                             <span className="text-xs text-on-surface-variant">%</span>

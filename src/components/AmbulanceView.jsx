@@ -92,7 +92,7 @@ function ECGOscilloscope({ heartRate }) {
   return <canvas ref={canvasRef} className="w-full h-24 bg-black/40 rounded-lg border border-white/5" width="400" height="96" />;
 }
 
-export default function AmbulanceView({ socket, socketConnected, ambulances, hospitals, trips, setActiveTrip, refreshTrips, setMapFocus }) {
+export default function AmbulanceView({ socket, socketConnected, ambulances, hospitals, trips, setActiveTrip, refreshTrips, setMapFocus, onNewDispatch }) {
   const [selectedAmbId, setSelectedAmbId] = useState('');
   const [isOffline, setIsOffline] = useState(false);
   const [offlineBuffer, setOfflineBuffer] = useState([]);
@@ -163,38 +163,7 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
 
   const { isListening, isSupported, speechError, toggleListening } = useVoiceDictation({ onTranscriptUpdate: onVoiceTranscript });
 
-  useEffect(() => {
-    if (!socket || !selectedAmbId) return;
-    const handleRedirect = async (data) => {
-      if (data.trip_id) {
-        let currentLoc = null;
-        setSimulations(prev => { const sim = prev[selectedAmbId]; if (sim) currentLoc = sim.currentLoc; return prev; });
-        if (!currentLoc) return;
-        const hospital = data.hospital;
-        const points = await fetchOSRMRoute(currentLoc, { lat: hospital?.lat, lng: hospital?.lng });
-        setSimulations(prev => {
-          const sim = prev[selectedAmbId];
-          if (sim && sim.activeTrip && sim.activeTrip.id === data.trip_id) return { ...prev, [selectedAmbId]: { ...sim, activeTrip: { ...sim.activeTrip, hospital_id: hospital.id }, routePoints: points, currentRouteIndex: 0 } };
-          return prev;
-        });
-      }
-    };
-    const handleAccept = (data) => {
-      if (data.trip_id) {
-        setSimulations(prev => {
-          const sim = prev[selectedAmbId];
-          if (sim && sim.activeTrip && sim.activeTrip.id === data.trip_id) return { ...prev, [selectedAmbId]: { ...sim, activeTrip: { ...sim.activeTrip, live_status: 'accepted' } } };
-          return prev;
-        });
-      }
-    };
-    socket.on('trip-redirected', handleRedirect);
-    socket.on('trip-accepted', handleAccept);
-    return () => {
-      socket.off('trip-redirected', handleRedirect);
-      socket.off('trip-accepted', handleAccept);
-    };
-  }, [socket, selectedAmbId]);
+  // Props reactively feed updates from App.jsx's WebSocket receiver
 
   useEffect(() => {
     if (ambulances && ambulances.length > 0 && !selectedAmbId) {
@@ -206,21 +175,30 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
     if (!trips || trips.length === 0) { setSimulations({}); return; }
     trips.forEach(async (trip) => {
       if (trip.live_status === 'enroute' && (!simulations[trip.ambulance_id] || !simulations[trip.ambulance_id].activeTrip)) {
-        try {
-          const res = await fetch(`http://localhost:5000/api/trips/${trip.id}`);
-          if (res.ok) {
-            const data = await res.json();
-            const amb = ambulances.find(a => a.id === trip.ambulance_id);
-            const latest = data.vitalsHistory && data.vitalsHistory.length > 0 ? data.vitalsHistory[data.vitalsHistory.length - 1] : null;
-            const startLoc = latest ? { lat: latest.lat, lng: latest.lng } : { lat: amb?.lat || 40.722, lng: amb?.lng || -73.950 };
-            const hospital = hospitals.find(h => h.id === trip.hospital_id);
-            let pts = hospital ? await fetchOSRMRoute(startLoc, { lat: hospital.lat, lng: hospital.lng }) : [];
-            setSimulations(prev => {
-              if (prev[trip.ambulance_id]?.activeTrip) return prev;
-              return { ...prev, [trip.ambulance_id]: { activeTrip: trip, patientName: trip.patient_name, patientAge: String(trip.patient_age), symptoms: trip.symptoms, vitals: latest ? { hr: latest.hr, spo2: latest.spo2, systolicBP: latest.systolic_bp, temp: latest.temp, respRate: latest.resp_rate } : { hr: 72, spo2: 98, systolicBP: 120, temp: 36.8, respRate: 16 }, routePoints: pts, currentRouteIndex: latest ? Math.round(pts.length / 2) : 0, isDriving: pts.length > 0, currentLoc: startLoc, speed: 0, heading: 0 } };
-            });
-          }
-        } catch (err) { console.error(err); }
+        const amb = ambulances.find(a => a.id === trip.ambulance_id);
+        const startLoc = { lat: amb?.lat || 15.852, lng: amb?.lng || 74.504 };
+        const hospital = hospitals.find(h => h.id === trip.hospital_id);
+        let pts = hospital ? await fetchOSRMRoute(startLoc, { lat: hospital.lat, lng: hospital.lng }) : [];
+        
+        setSimulations(prev => {
+          if (prev[trip.ambulance_id]?.activeTrip) return prev;
+          return {
+            ...prev,
+            [trip.ambulance_id]: {
+              activeTrip: trip,
+              patientName: trip.patient_name,
+              patientAge: String(trip.patient_age),
+              symptoms: trip.symptoms,
+              vitals: { hr: 142, spo2: 88, systolicBP: 90, temp: 37.2, respRate: 26 },
+              routePoints: pts,
+              currentRouteIndex: 0,
+              isDriving: pts.length > 0,
+              currentLoc: startLoc,
+              speed: 0,
+              heading: 0
+            }
+          };
+        });
       }
     });
   }, [trips, ambulances, hospitals]);
@@ -268,47 +246,100 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
     e.preventDefault();
     if (!selectedAmbId) return;
     const sim = getSim(selectedAmbId);
-    try {
-      const res = await fetch('http://localhost:5000/api/trips', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ambulance_id: selectedAmbId, patient_name: sim.patientName, patient_age: Number(sim.patientAge), symptoms: sim.symptoms }) });
-      if (res.ok) {
-        const data = await res.json();
-        const hospital = hospitals.find(h => h.id === data.trip.hospital_id);
-        const amb = ambulances.find(a => a.id === selectedAmbId);
-        const start = { lat: amb?.lat || 15.852, lng: amb?.lng || 74.504 };
-        const end = { lat: hospital?.lat || 15.8828, lng: hospital?.lng || 74.5242 };
-        const points = await fetchOSRMRoute(start, end);
-        setSimulations(prev => ({ ...prev, [selectedAmbId]: { ...sim, activeTrip: data.trip, routePoints: points, currentRouteIndex: 0, isDriving: true, currentLoc: start } }));
-        if (setActiveTrip) setActiveTrip(data.trip);
-        refreshTrips();
+    
+    const newPatientId = "PT-" + Math.random().toString(36).substr(2, 9).toUpperCase();
+    const patientData = {
+      id: newPatientId,
+      name: sim.patientName,
+      age: parseInt(sim.patientAge) || 52,
+      symptoms: sim.symptoms,
+      urgency: localUrgency,
+      status: "EnRoute",
+      vitals: {
+        hr: sim.vitals.hr,
+        spo2: sim.vitals.spo2,
+        bpSys: sim.vitals.systolicBP,
+        bpDia: 60,
+        temp: sim.vitals.temp,
+        news2Score: localScore
+      },
+      assignedHospital: {
+        id: "HOSP-01"
+      },
+      ambulanceId: selectedAmbId,
+      ambulanceCallsign: ambulances.find(a => a.id === selectedAmbId)?.callsign || "Rescue Unit"
+    };
+
+    if (onNewDispatch) {
+      onNewDispatch(patientData);
+    }
+
+    const hospital = hospitals.find(h => h.id === "HOSP-01");
+    const amb = ambulances.find(a => a.id === selectedAmbId);
+    const start = { lat: amb?.lat || 15.852, lng: amb?.lng || 74.504 };
+    const end = { lat: hospital?.lat || 15.8828, lng: hospital?.lng || 74.5242 };
+    const points = await fetchOSRMRoute(start, end);
+
+    setSimulations(prev => ({
+      ...prev,
+      [selectedAmbId]: {
+        ...sim,
+        activeTrip: {
+          id: newPatientId,
+          ambulance_id: selectedAmbId,
+          patient_name: sim.patientName,
+          patient_age: sim.patientAge,
+          symptoms: sim.symptoms,
+          urgency: localUrgency,
+          hospital_id: "HOSP-01",
+          news2_score: localScore
+        },
+        routePoints: points,
+        currentRouteIndex: 0,
+        isDriving: true,
+        currentLoc: start
       }
-    } catch (err) { alert(err.message); }
+    }));
+
+    if (setActiveTrip) {
+      setActiveTrip({
+        id: newPatientId,
+        ambulance_id: selectedAmbId,
+        patient_name: sim.patientName,
+        patient_age: sim.patientAge,
+        symptoms: sim.symptoms,
+        urgency: localUrgency,
+        hospital_id: "HOSP-01",
+        news2_score: localScore
+      });
+    }
   };
 
   const completeTrip = async () => {
     const sim = getSim(selectedAmbId);
     if (!sim.activeTrip) return;
-    try {
-      const res = await fetch(`http://localhost:5000/api/trips/${sim.activeTrip.id}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ambulance_id: selectedAmbId, hospital_id: sim.activeTrip.hospital_id }) });
-      if (res.ok) {
-        setSimulations(prev => { const next = { ...prev }; delete next[selectedAmbId]; return next; });
-        if (setActiveTrip) setActiveTrip(null);
-        refreshTrips();
-      }
-    } catch (err) { console.error(err); }
+    setSimulations(prev => { const next = { ...prev }; delete next[selectedAmbId]; return next; });
+    if (setActiveTrip) setActiveTrip(null);
   };
 
   const redirectHospital = async (hospId) => {
     const sim = getSim(selectedAmbId);
     if (!sim.activeTrip) return;
-    try {
-      const res = await fetch(`http://localhost:5000/api/trips/${sim.activeTrip.id}/redirect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hospital_id: hospId }) });
-      if (res.ok) {
-        const hospital = hospitals.find(h => h.id === hospId);
-        const points = interpolatePoints(sim.currentLoc, { lat: hospital?.lat || 15.8828, lng: hospital?.lng || 74.5242 }, 30);
-        setSimulations(prev => ({ ...prev, [selectedAmbId]: { ...sim, activeTrip: { ...sim.activeTrip, hospital_id: hospId }, routePoints: points, currentRouteIndex: 0, isDriving: true } }));
-        refreshTrips();
+    const hospital = hospitals.find(h => h.id === hospId);
+    const points = interpolatePoints(sim.currentLoc, { lat: hospital?.lat || 15.8828, lng: hospital?.lng || 74.5242 }, 30);
+    setSimulations(prev => ({
+      ...prev,
+      [selectedAmbId]: {
+        ...sim,
+        activeTrip: {
+          ...sim.activeTrip,
+          hospital_id: hospId
+        },
+        routePoints: points,
+        currentRouteIndex: 0,
+        isDriving: true
       }
-    } catch (err) { console.error(err); }
+    }));
   };
 
   const runMedicalScan = () => {
@@ -391,29 +422,15 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
           </section>
         )}
 
-        {/* Dispatch Form / Active Telemetry */}
+        {/* Triage Workspace Placeholder */}
         {!currentSim.activeTrip ? (
-          <form onSubmit={startDispatch} className="glass-panel rounded-xl p-6 space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="font-label-caps text-[10px] text-on-surface-variant block">PATIENT NAME</label>
-                <input value={currentSim.patientName} onChange={(e) => updateSimField(selectedAmbId, 'patientName', e.target.value)} required className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-on-surface" placeholder="PT-XXXX" />
-              </div>
-              <div className="space-y-2">
-                <label className="font-label-caps text-[10px] text-on-surface-variant block">AGE / SEX</label>
-                <input value={currentSim.patientAge} onChange={(e) => updateSimField(selectedAmbId, 'patientAge', e.target.value)} required className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-on-surface" placeholder="e.g. 52" />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="font-label-caps text-[10px] text-on-surface-variant block">CREW SYMPTOM SUMMARY</label>
-              <textarea value={currentSim.symptoms} onChange={(e) => updateSimField(selectedAmbId, 'symptoms', e.target.value)} required rows="4" className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-on-surface" placeholder="Enter clinical notes..." />
-            </div>
-
-            <button type="submit" className="w-full bg-primary-container text-white py-3 rounded-lg font-bold hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-2">
-              <Radio size={16} /> Transmit Live Telemetry
-            </button>
-          </form>
+          <div className="glass-panel rounded-xl p-8 text-center space-y-4">
+            <Radio size={36} className="mx-auto text-on-surface-variant opacity-40 animate-pulse" />
+            <h3 className="text-base font-bold text-on-surface">No Active Triage Session</h3>
+            <p className="text-xs text-on-surface-variant max-w-sm mx-auto">
+              This terminal is ready for diagnostic stream monitoring. Click "New Dispatch" in the sidebar to configure a patient ticket and launch telemetry.
+            </p>
+          </div>
         ) : (
           <div className="space-y-6">
             {/* Live vitals summary / Waveform */}

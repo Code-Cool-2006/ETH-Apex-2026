@@ -7,14 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "server": "node backend/server.js"
+    "preview": "vite preview"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
     "lucide-react": "^0.475.0",
-    "pg": "^8.13.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "socket.io": "^4.8.1",

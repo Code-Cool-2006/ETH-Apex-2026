@@ -48,10 +48,21 @@ export default function SOSView() {
 
   const triggerSOS = () => {
     console.log("SOS Triggered! Location:", coords);
-    fetch('http://localhost:5000/api/sos/trigger', {
+    fetch('http://localhost:8000/api/sos/trigger', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ coords, contacts })
+      body: JSON.stringify({
+        patient_name: "Patient-SOS",
+        lat: coords ? coords.lat : 34.0522,
+        lng: coords ? coords.lng : -118.2437,
+        condition: "Medical Emergency",
+        contacts: contacts.map(c => ({
+          name: c.name,
+          phone: c.phone,
+          email: c.email || "",
+          relation: "Family"
+        }))
+      })
     }).catch(err => console.error("Failed to post SOS to server:", err));
   };
 

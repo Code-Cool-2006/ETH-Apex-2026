@@ -19,15 +19,16 @@ export default function SettingsView() {
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/settings');
+        const res = await fetch('http://localhost:8000/api/settings', {
+          headers: { 'Authorization': 'Bearer admin_master_token_MEDISYNC' }
+        });
         if (res.ok) {
           const data = await res.json();
           setConfig(prev => ({
             ...prev,
-            smtpHost: data.SMTP_HOST || '',
-            smtpPort: data.SMTP_PORT || '587',
-            smtpUser: data.SMTP_USER || '',
-            smtpPass: data.SMTP_PASS || '',
+            smtpHost: 'smtp.gmail.com',
+            smtpPort: 587,
+            smtpUser: data.smtp_user_hint || '',
           }));
         }
       } catch (err) {
@@ -42,22 +43,28 @@ export default function SettingsView() {
   };
 
   const handleSave = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setSaveLoading(true);
     setStatusMessage('');
     try {
-      const res = await fetch('http://localhost:5000/api/settings', {
+      const res = await fetch('http://localhost:8000/api/settings/save-smtp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer admin_master_token_MEDISYNC'
+        },
         body: JSON.stringify({
-          SMTP_HOST: config.smtpHost,
-          SMTP_PORT: config.smtpPort,
-          SMTP_USER: config.smtpUser,
-          SMTP_PASS: config.smtpPass
+          smtp_host: config.smtpHost || 'smtp.gmail.com',
+          smtp_port: parseInt(config.smtpPort) || 587,
+          smtp_user: config.smtpUser,
+          smtp_password: config.smtpPass
         })
       });
-      if (res.ok) setStatusMessage('Settings applied successfully.');
-      else setStatusMessage('Failed to save settings.');
+      if (res.ok) setStatusMessage('SMTP Settings applied successfully to Python service.');
+      else {
+        const errData = await res.json();
+        setStatusMessage(`Failed to save settings: ${errData.detail || 'check values'}`);
+      }
     } catch (err) {
       setStatusMessage('Connection error: ' + err.message);
     } finally {
@@ -70,13 +77,23 @@ export default function SettingsView() {
     setTestLoading(true);
     setStatusMessage('');
     try {
-      const res = await fetch('http://localhost:5000/api/settings/test', {
+      const res = await fetch('http://localhost:8000/api/settings/test-email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: config.testEmail })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer admin_master_token_MEDISYNC'
+        },
+        body: JSON.stringify({ 
+          to_email: config.testEmail,
+          to_phone: "+15555555555" // dummy value to satisfy Twilio schema check
+        })
       });
       const data = await res.json();
-      setStatusMessage(data.success ? 'Test email dispatched successfully!' : `Failed: ${data.error}`);
+      if (res.ok) {
+        setStatusMessage('Test email dispatched successfully!');
+      } else {
+        setStatusMessage(`Failed: ${data.detail || 'SMTP credentials mismatch'}`);
+      }
     } catch (err) {
       setStatusMessage('Test failed: ' + err.message);
     } finally {

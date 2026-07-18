@@ -1,5 +1,4 @@
-import React, { useState, useEffect } from 'react';
-import { io } from 'socket.io-client';
+import React, { useState, useEffect, useRef } from 'react';
 import { ShieldAlert, Search, Bell, Settings, Users, Activity, BarChart3, History, HelpCircle, LogOut, Plus, Trash2 } from 'lucide-react';
 import './App.css';
 import AmbulanceView from './components/AmbulanceView';
@@ -7,27 +6,31 @@ import HospitalView from './components/HospitalView';
 import CommandView from './components/CommandView';
 import SOSView from './components/SOSView';
 import SettingsView from './components/SettingsView';
+import LogsView from './components/LogsView';
+import NewDispatchView from './components/NewDispatchView';
 
-// Connect to real-time server
-const socket = io('http://localhost:5000', {
-  autoConnect: true,
-  reconnection: true
-});
+const DEFAULT_AMBULANCES = [
+  { id: 'AMB-01', callsign: 'Rescue 402', status: 'idle', lat: 15.8566, lng: 74.5097, speed: 0 },
+  { id: 'AMB-02', callsign: 'BLS Unit 12', status: 'idle', lat: 15.8622, lng: 74.5122, speed: 0 },
+  { id: 'AMB-03', callsign: 'ALS Rescue 08', status: 'idle', lat: 15.8455, lng: 74.5011, speed: 0 }
+];
+
+const DEFAULT_HOSPITALS = [
+  { id: 'HOSP-01', name: 'MediSync Central', lat: 15.852, lng: 74.504, icu_beds: 4, total_beds: 40, has_trauma: true, has_cardiac: true },
+  { id: 'HOSP-02', name: 'West Valley Medical', lat: 15.8828, lng: 74.5242, icu_beds: 2, total_beds: 20, has_trauma: false, has_cardiac: true }
+];
 
 function App() {
   const [socketConnected, setSocketConnected] = useState(false);
-  const [ambulances, setAmbulances] = useState([]);
-  const [hospitals, setHospitals] = useState([]);
+  const [ambulances, setAmbulances] = useState(DEFAULT_AMBULANCES);
+  const [hospitals, setHospitals] = useState(DEFAULT_HOSPITALS);
   const [trips, setTrips] = useState([]);
-  
-  // Simulation Active Trip state
   const [activeTrip, setActiveTrip] = useState(null);
-  
-  // Custom router state
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
-  
-  // Dynamic Map Focusing coord trigger
   const [mapFocus, setMapFocus] = useState(null);
+
+  const wsRef = useRef(null);
+  const wsGpsRef = useRef(null);
 
   useEffect(() => {
     const handleLocationChange = () => {
@@ -42,96 +45,143 @@ function App() {
     setCurrentPath(to);
   };
 
-  // Fetch initial data on load
-  const fetchData = async () => {
-    try {
-      const resAmb = await fetch('http://localhost:5000/api/ambulances');
-      if (resAmb.ok) {
-        const data = await resAmb.json();
-        setAmbulances(data);
-      }
-      
-      const resHosp = await fetch('http://localhost:5000/api/hospitals');
-      if (resHosp.ok) {
-        const data = await resHosp.json();
-        setHospitals(data);
-      }
-
-      const resTrips = await fetch('http://localhost:5000/api/trips');
-      if (resTrips.ok) {
-        const data = await resTrips.json();
-        setTrips(data);
-        
-        const active = data.find(t => t.live_status === 'enroute');
-        if (active) {
-          setActiveTrip(active);
-        } else {
-          setActiveTrip(null);
-        }
-      }
-    } catch (err) {
-      console.warn("Could not connect to Express API. Ensure the backend server is running on port 5000.", err.message);
-    }
-  };
-
+  // Connect to FastAPI WebSockets
   useEffect(() => {
-    fetchData();
+    const token = 'ems_device_token_UNIT_A42'; // Auth token registered in auth.py
+    
+    // 1. Patient Telemetry Channel
+    const ws = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
+    wsRef.current = ws;
 
-    socket.on('connect', () => {
+    ws.onopen = () => {
       setSocketConnected(true);
-      console.log("Connected to Realtime Server via WebSockets.");
-    });
+      console.log("[WS] Connected to Patient Telemetry Channel.");
+    };
 
-    socket.on('disconnect', () => {
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        console.log("[WS] Received message:", msg);
+        if (msg.type === 'INITIAL_STATE') {
+          const loadedTrips = msg.data.map(p => ({
+            id: p.id,
+            ambulance_id: p.ambulanceId || 'AMB-01',
+            ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
+            patient_name: p.name,
+            patient_age: p.age,
+            symptoms: p.symptoms,
+            urgency: p.urgency,
+            live_status: p.status === 'Completed' ? 'completed' : 'enroute',
+            hospital_id: p.assignedHospital?.id || 'HOSP-01',
+            news2_score: p.vitals?.news2Score || 0
+          }));
+          setTrips(loadedTrips);
+          const active = loadedTrips.find(t => t.live_status === 'enroute');
+          if (active) setActiveTrip(active);
+        } else if (msg.type === 'NEW_PATIENT_BROADCAST') {
+          const newTrip = {
+            id: msg.data.id,
+            ambulance_id: msg.data.ambulanceId || 'AMB-01',
+            ambulance_callsign: msg.data.ambulanceCallsign || 'Rescue 402',
+            patient_name: msg.data.name,
+            patient_age: msg.data.age,
+            symptoms: msg.data.symptoms,
+            urgency: msg.data.urgency,
+            live_status: 'enroute',
+            hospital_id: msg.data.assignedHospital?.id || 'HOSP-01',
+            news2_score: msg.data.vitals?.news2Score || 0
+          };
+          setTrips(prev => {
+            if (prev.some(t => t.id === newTrip.id)) return prev;
+            return [...prev, newTrip];
+          });
+          setActiveTrip(newTrip);
+        } else if (msg.type === 'UPDATE_PATIENTS') {
+          const loadedTrips = msg.data.map(p => ({
+            id: p.id,
+            ambulance_id: p.ambulanceId || 'AMB-01',
+            ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
+            patient_name: p.name,
+            patient_age: p.age,
+            symptoms: p.symptoms,
+            urgency: p.urgency,
+            live_status: p.status === 'Completed' ? 'completed' : 'enroute',
+            hospital_id: p.assignedHospital?.id || 'HOSP-01',
+            news2_score: p.vitals?.news2Score || 0
+          }));
+          setTrips(loadedTrips);
+          const active = loadedTrips.find(t => t.live_status === 'enroute');
+          setActiveTrip(active || null);
+        }
+      } catch (err) {
+        console.error("Error parsing telemetry message:", err);
+      }
+    };
+
+    ws.onclose = () => {
       setSocketConnected(false);
-      console.log("Disconnected from Realtime Server.");
-    });
+      console.log("[WS] Disconnected from Patient Telemetry Channel.");
+    };
 
-    socket.on('trip-started', () => {
-      fetchData();
-    });
+    // 2. GPS Fleet Tracking Channel
+    const wsGps = new WebSocket(`ws://localhost:8000/ws/gps?token=${token}`);
+    wsGpsRef.current = wsGps;
 
-    socket.on('trip-completed', () => {
-      fetchData();
-      setActiveTrip(null);
-    });
-
-    socket.on('hospital-update', (updatedHosp) => {
-      setHospitals(prev => prev.map(h => h.id === updatedHosp.id ? updatedHosp : h));
-    });
-
-    socket.on('system-reset', () => {
-      fetchData();
-      setActiveTrip(null);
-    });
-
-    const interval = setInterval(fetchData, 8000);
+    wsGps.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'GPS_STATE' || msg.type === 'GPS_BROADCAST') {
+          const gpsMap = {};
+          msg.data.forEach(unit => {
+            gpsMap[unit.unitId] = unit;
+          });
+          setAmbulances(prev => prev.map(amb => {
+            const update = gpsMap[amb.id];
+            if (update) {
+              return {
+                ...amb,
+                lat: update.lat,
+                lng: update.lng,
+                status: update.status === 'Arrived' ? 'idle' : 'enroute',
+                speed: update.speed || 0
+              };
+            }
+            return amb;
+          }));
+        }
+      } catch (err) {
+        console.error("Error parsing GPS message:", err);
+      }
+    };
 
     return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('trip-started');
-      socket.off('trip-completed');
-      socket.off('hospital-update');
-      socket.off('system-reset');
-      clearInterval(interval);
+      ws.close();
+      wsGps.close();
     };
   }, []);
 
-  const handleSystemReset = async () => {
+  const handleSystemReset = () => {
     if (window.confirm("Are you sure you want to clear all active dispatches, clinical telemetry logs, and reset the fleet to default positions?")) {
-      try {
-        const response = await fetch('http://localhost:5000/api/reset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        if (response.ok) {
-          console.log("System database reset successfully.");
-        }
-      } catch (err) {
-        console.error("Error resetting system:", err);
-      }
+      setTrips([]);
+      setActiveTrip(null);
+      setAmbulances(DEFAULT_AMBULANCES);
+      setHospitals(DEFAULT_HOSPITALS);
+      console.log("Local system database reset successfully.");
     }
+  };
+
+  const handleNewDispatch = (patientData) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "NEW_PATIENT",
+        data: patientData
+      }));
+    }
+  };
+
+  const handleAcceptTrip = (tripId) => {
+    setTrips(prev => prev.map(t => t.id === tripId ? { ...t, live_status: 'completed', urgency: 'stable' } : t));
+    setActiveTrip(prev => prev && prev.id === tripId ? null : prev);
   };
 
   // Nav links for top header
@@ -144,10 +194,10 @@ function App() {
 
   // Sidebar nav items
   const sidebarItems = [
-    { icon: Users, label: 'Patients', path: '/' },
-    { icon: Activity, label: 'Triage', path: '/', active: currentPath === '/' },
-    { icon: BarChart3, label: 'Analytics', path: '/tracking' },
-    { icon: History, label: 'Logs', path: '/emt' },
+    { icon: Users, label: 'Patients', path: '/', active: currentPath === '/' },
+    { icon: Activity, label: 'Triage', path: '/emt', active: currentPath === '/emt' },
+    { icon: BarChart3, label: 'Analytics', path: '/tracking', active: currentPath === '/tracking' },
+    { icon: History, label: 'Logs', path: '/logs', active: currentPath === '/logs' },
   ];
 
   return (
@@ -192,7 +242,7 @@ function App() {
         {/* New Dispatch Button */}
         <div className="px-4 mb-4">
           <button 
-            onClick={handleSystemReset}
+            onClick={() => navigate('/new-dispatch')}
             className="w-full bg-primary-container text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 hover:brightness-110 active:scale-95 transition-all text-sm"
           >
             <Plus size={18} />
@@ -232,34 +282,36 @@ function App() {
         
         {currentPath === '/' && (
           <HospitalView 
-            socket={socket}
+            socket={null}
             socketConnected={socketConnected}
             ambulances={ambulances}
             hospitals={hospitals}
             trips={trips}
             setHospitals={setHospitals}
-            refreshHospitals={fetchData}
+            refreshHospitals={() => {}}
             mapFocus={mapFocus}
+            onAcceptTrip={handleAcceptTrip}
           />
         )}
 
         {currentPath === '/emt' && (
           <AmbulanceView 
-            socket={socket} 
+            socket={wsRef.current} 
             socketConnected={socketConnected}
             ambulances={ambulances}
             hospitals={hospitals}
             trips={trips}
             activeTrip={activeTrip}
             setActiveTrip={setActiveTrip}
-            refreshTrips={fetchData}
+            refreshTrips={() => {}}
             setMapFocus={setMapFocus}
+            onNewDispatch={handleNewDispatch}
           />
         )}
 
         {currentPath === '/tracking' && (
           <CommandView 
-            socket={socket}
+            socket={null}
             ambulances={ambulances}
             hospitals={hospitals}
             trips={trips}
@@ -274,30 +326,16 @@ function App() {
           <SettingsView />
         )}
 
-        {currentPath === '/sandbox' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-120px)]">
-            <AmbulanceView 
-              socket={socket} 
-              socketConnected={socketConnected}
-              ambulances={ambulances}
-              hospitals={hospitals}
-              trips={trips}
-              activeTrip={activeTrip}
-              setActiveTrip={setActiveTrip}
-              refreshTrips={fetchData}
-              setMapFocus={setMapFocus}
-            />
-            <HospitalView 
-              socket={socket}
-              socketConnected={socketConnected}
-              ambulances={ambulances}
-              hospitals={hospitals}
-              trips={trips}
-              setHospitals={setHospitals}
-              refreshHospitals={fetchData}
-              mapFocus={mapFocus}
-            />
-          </div>
+        {currentPath === '/logs' && (
+          <LogsView trips={trips} />
+        )}
+
+        {currentPath === '/new-dispatch' && (
+          <NewDispatchView 
+            ambulances={ambulances} 
+            onNewDispatch={handleNewDispatch} 
+            navigate={navigate} 
+          />
         )}
 
       </main>
