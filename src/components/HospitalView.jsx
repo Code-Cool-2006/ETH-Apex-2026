@@ -193,7 +193,8 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
     if (!selectedTripId) return;
     const fetchTripDetails = async () => {
       try {
-        const res = await fetch(`http://localhost:5000/api/trips/${selectedTripId}`);
+        const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://eth-apex-2026.onrender.com';
+        const res = await fetch(`${API_URL}/api/trips/${selectedTripId}`);
         if (res.ok) {
           const data = await res.json();
           if (data.vitalsHistory && data.vitalsHistory.length > 0) {

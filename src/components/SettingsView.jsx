@@ -19,7 +19,8 @@ export default function SettingsView() {
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/settings', {
+        const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://eth-apex-2026.onrender.com';
+        const res = await fetch(`${API_URL}/api/settings`, {
           headers: { 'Authorization': 'Bearer admin_master_token_MEDISYNC' }
         });
         if (res.ok) {
@@ -47,7 +48,8 @@ export default function SettingsView() {
     setSaveLoading(true);
     setStatusMessage('');
     try {
-      const res = await fetch('http://localhost:8000/api/settings/save-smtp', {
+      const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://eth-apex-2026.onrender.com';
+      const res = await fetch(`${API_URL}/api/settings/save-smtp`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -77,7 +79,8 @@ export default function SettingsView() {
     setTestLoading(true);
     setStatusMessage('');
     try {
-      const res = await fetch('http://localhost:8000/api/settings/test-email', {
+      const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://eth-apex-2026.onrender.com';
+      const res = await fetch(`${API_URL}/api/settings/test-email`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

@@ -471,7 +471,8 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
     const hospName = hospitals.find(h => h.id === sim.activeTrip?.hospital_id)?.name || 'MediSync Central';
 
     try {
-      const resp = await fetch('http://localhost:8000/api/triage/consult', {
+      const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://eth-apex-2026.onrender.com';
+      const resp = await fetch(`${API_URL}/api/triage/consult`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

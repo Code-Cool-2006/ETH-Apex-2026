@@ -82,8 +82,9 @@ function App() {
   useEffect(() => {
     const token = 'ems_device_token_UNIT_A42'; // Auth token registered in auth.py
     
+    const WS_URL = window.location.hostname === 'localhost' ? 'ws://localhost:8000' : 'wss://eth-apex-2026.onrender.com';
     // 1. Patient Telemetry Channel
-    const ws = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
+    const ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -164,7 +165,8 @@ function App() {
     };
 
     // 2. GPS Fleet Tracking Channel
-    const wsGps = new WebSocket(`ws://localhost:8000/ws/gps?token=${token}`);
+    const WS_URL = window.location.hostname === 'localhost' ? 'ws://localhost:8000' : 'wss://eth-apex-2026.onrender.com';
+    const wsGps = new WebSocket(`${WS_URL}/ws/gps?token=${token}`);
     wsGpsRef.current = wsGps;
 
     wsGps.onmessage = (event) => {
@@ -388,7 +390,8 @@ function App() {
   const handleSystemReset = async () => {
     if (window.confirm("Are you sure you want to clear all active dispatches, clinical telemetry logs, and reset the fleet to default positions?")) {
       try {
-        await fetch('http://localhost:8000/api/reset', { method: 'POST' });
+        const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://eth-apex-2026.onrender.com';
+        await fetch(`${API_URL}/api/reset`, { method: 'POST' });
       } catch (err) {
         console.warn("Failed to reset backend state:", err);
       }
