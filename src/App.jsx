@@ -165,7 +165,7 @@ function App() {
     };
 
     // 2. GPS Fleet Tracking Channel
-    const WS_URL = window.location.hostname === 'localhost' ? 'ws://localhost:8000' : 'wss://eth-apex-2026.onrender.com';
+
     const wsGps = new WebSocket(`${WS_URL}/ws/gps?token=${token}`);
     wsGpsRef.current = wsGps;
 
