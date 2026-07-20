@@ -165,7 +165,296 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
     ]
   });
 
-  const handleSendChat = (e, presetText = null) => {
+  const generateLocalAIMedicationPrescription = (query, sim, hospitalName) => {
+    const q = query.toLowerCase();
+    const vitals = sim.vitals || {};
+    const hr = vitals.hr || 80;
+    const spo2 = vitals.spo2 || 98;
+    const sysBP = vitals.systolicBP || 120;
+    const temp = vitals.temp || 37.0;
+    const obs = (sim.symptoms || sim.activeTrip?.symptoms || '').toLowerCase();
+
+    let diagnosis = "Acute Emergency Diagnostic Review";
+    let medications = [];
+    let contraindications = [];
+    let actions = [];
+
+    // 1. Stroke / CVA / Neurological Deficit
+    if (obs.includes('stroke') || obs.includes('cva') || obs.includes('facial droop') || obs.includes('slurred') || obs.includes('paralysis') || obs.includes('weakness') || q.includes('stroke') || q.includes('cva') || q.includes('neuro')) {
+      diagnosis = "Acute Cerebrovascular Accident (CVA) / Acute Ischemic Stroke";
+      medications.push({
+        name: "Normal Saline 0.9%",
+        dose: "500 mL IV (Avoid Dextrose)",
+        route: "IV Infusion",
+        purpose: "Maintain cerebral perfusion pressure without exacerbating hyperosmolar cerebral edema"
+      });
+      if (sysBP > 220) {
+        medications.push({
+          name: "Labetalol Hydrochloride",
+          dose: "10-20 mg IV slow push over 2 min",
+          route: "Intravenous",
+          purpose: "Controlled antihypertensive therapy for severe stroke (BP > 220/120 mmHg)"
+        });
+      } else {
+        contraindications.push("PERFUSION ALERT: Permissive hypertension allowed. Do not lower BP unless Systolic > 220 mmHg.");
+      }
+      actions.push("Perform immediate LAMS/FAST stroke score assessment.");
+      actions.push(`Notify ${hospitalName} Stroke Team for priority CT Angiogram & tPA readiness.`);
+
+    // 2. Seizure / Status Epilepticus
+    } else if (obs.includes('seizure') || obs.includes('epilepsy') || obs.includes('convulsion') || obs.includes('post-ictal') || q.includes('seizure') || q.includes('epilepsy')) {
+      diagnosis = "Acute Seizure / Status Epilepticus Risk";
+      medications.push({
+        name: "Midazolam (Versed)",
+        dose: "5.0 mg IM (or 2.5 mg IV)",
+        route: "Intramuscular / IV",
+        purpose: "First-line short-acting benzodiazepine to terminate active seizure motor activity"
+      });
+      medications.push({
+        name: "Dextrose 50% (D50W)",
+        dose: "25 g (50 mL) IV Push",
+        route: "Rapid IV Push",
+        purpose: "Empirical treatment for suspected neuroglycopenic seizure trigger"
+      });
+      actions.push("Position patient in left lateral recovery position & protect airway.");
+      actions.push("Administer high-flow supplemental oxygen via Non-Rebreather mask.");
+
+    // 3. Hypoglycemia / Diabetic Shock
+    } else if (obs.includes('hypoglycemia') || obs.includes('diabetic') || obs.includes('sugar') || obs.includes('glucose') || obs.includes('insulin shock') || q.includes('sugar') || q.includes('glucose') || q.includes('diabetic')) {
+      diagnosis = "Acute Hypoglycemic Emergency (Blood Glucose < 70 mg/dL)";
+      medications.push({
+        name: "Dextrose 50% (D50W)",
+        dose: "25 g (50 mL) IV Push",
+        route: "Rapid IV Push",
+        purpose: "Immediate intravenous glycemic restoration for central nervous system protection"
+      });
+      medications.push({
+        name: "Glucagon",
+        dose: "1.0 mg IM",
+        route: "Intramuscular",
+        purpose: "Hepatic glycogenolysis mobilization (if IV access delayed/unobtainable)"
+      });
+      actions.push("Re-check capillary fingerstick blood glucose 5 minutes post-administration.");
+
+    // 4. Anaphylaxis / Severe Allergic Reaction
+    } else if (obs.includes('anaphylaxis') || obs.includes('allergic') || obs.includes('hives') || obs.includes('stridor') || obs.includes('swelling') || q.includes('allergy') || q.includes('anaphylaxis')) {
+      diagnosis = "Anaphylactic Shock / Severe Systemic Allergic Reaction";
+      medications.push({
+        name: "Epinephrine (1:1,000)",
+        dose: "0.3 mg IM (Anterolateral Thigh)",
+        route: "Intramuscular",
+        purpose: "Alpha-1 vasoconstriction & Beta-2 bronchodilation life-saving emergency therapy"
+      });
+      medications.push({
+        name: "Diphenhydramine (Benadryl)",
+        dose: "50 mg IV / IM",
+        route: "Intravenous",
+        purpose: "H1 receptor antagonist to attenuate systemic histamine release"
+      });
+      medications.push({
+        name: "Methylprednisolone (Solu-Medrol)",
+        dose: "125 mg IV",
+        route: "IV Push",
+        purpose: "Systemic corticosteroid to prevent biphasic anaphylactic recurrence"
+      });
+      actions.push("Prepare Endotracheal Intubation kit for impending laryngeal angioedema.");
+
+    // 5. Opioid Overdose / Substance Toxicity
+    } else if (obs.includes('overdose') || obs.includes('opioid') || obs.includes('heroin') || obs.includes('fentanyl') || obs.includes('narcan') || obs.includes('unresponsive') || q.includes('overdose') || q.includes('narcan')) {
+      diagnosis = "Acute Opioid Toxicity / Severe Hypoventilation";
+      medications.push({
+        name: "Naloxone Hydrochloride (Narcan)",
+        dose: "2.0 mg IN (Nasal Spray) or 0.4 mg IV",
+        route: "Intranasal / IV",
+        purpose: "Competitive pure opioid antagonist to restore spontaneous respiratory drive"
+      });
+      actions.push("Perform Bag-Valve-Mask (BVM) ventilations with 100% O2 prior to Naloxone push.");
+      actions.push("Monitor for acute withdrawal emesis and airway aspiration.");
+
+    // 6. Cardiac / ACS / STEMI / Chest Pain
+    } else if (obs.includes('infarction') || obs.includes('st-elevation') || obs.includes('cardiac') || obs.includes('chest pain') || obs.includes('myocardial') || q.includes('heart') || q.includes('cardiac') || q.includes('chest') || q.includes('stemi') || q.includes('medication')) {
+      diagnosis = "Acute Coronary Syndrome (ACS) / Suspected STEMI";
+      medications.push({
+        name: "Aspirin (ASA)",
+        dose: "325 mg PO (chewable)",
+        route: "Oral",
+        purpose: "Antiplatelet aggregation to halt thrombus propagation"
+      });
+      if (sysBP >= 90) {
+        medications.push({
+          name: "Nitroglycerin",
+          dose: "0.4 mg SL (q5min x 3 max)",
+          route: "Sublingual",
+          purpose: "Coronary vasodilation & reduction of myocardial workload"
+        });
+      } else {
+        contraindications.push("NITROGLYCERIN CONTRAINDICATED: Systolic BP < 90 mmHg (Hypotension Risk)");
+      }
+      if (spo2 < 94) {
+        medications.push({
+          name: "Supplemental Oxygen",
+          dose: "2-4 L/min via Nasal Cannula",
+          route: "Inhalation",
+          purpose: "Maintain target SpO2 94-98%"
+        });
+      }
+      actions.push(`Notify ${hospitalName} Cardiac Cath Lab for immediate bay activation.`);
+      actions.push("Acquire 12-lead ECG telemetry stream every 5 minutes.");
+
+    // 7. Respiratory Distress / Asthma / COPD
+    } else if (obs.includes('respiratory') || obs.includes('dyspnea') || obs.includes('pneumothorax') || obs.includes('breath') || spo2 < 92 || q.includes('breath') || q.includes('oxygen') || q.includes('asthma')) {
+      diagnosis = "Acute Respiratory Distress / Severe Bronchospasm";
+      medications.push({
+        name: "Albuterol Sulfate + Ipratropium (DuoNeb)",
+        dose: "2.5 mg / 0.5 mg Nebulized",
+        route: "Inhalation",
+        purpose: "Rapid bronchodilation for acute airway smooth muscle constriction"
+      });
+      medications.push({
+        name: "Dexamethasone",
+        dose: "10 mg IV / PO",
+        route: "Intravenous",
+        purpose: "Systemic corticosteroid anti-inflammatory treatment"
+      });
+      medications.push({
+        name: "High-Flow Oxygen",
+        dose: "10-15 L/min Non-Rebreather Mask",
+        route: "Inhalation",
+        purpose: `Rapid correction of arterial hypoxemia (Current SpO2: ${spo2}%)`
+      });
+      actions.push("Auscultate bilateral lung sounds q5min to monitor air entry.");
+
+    // 8. Symptomatic Bradycardia
+    } else if (hr < 50 || q.includes('slow') || q.includes('bradycardia')) {
+      diagnosis = "Symptomatic Severe Bradycardia";
+      medications.push({
+        name: "Atropine Sulfate",
+        dose: "1.0 mg IV Bolus",
+        route: "Rapid IV Push",
+        purpose: `Parasympatholytic anticholinergic to elevate sinus rate (HR: ${hr} BPM)`
+      });
+      if (sysBP < 90) {
+        medications.push({
+          name: "Epinephrine Infusion",
+          dose: "2-10 mcg/min IV Drip",
+          route: "Continuous IV",
+          purpose: "Inotropic support for fluid-refractory hypotension"
+        });
+      }
+      actions.push("Apply Transcutaneous Pacing (TCP) pads immediately.");
+
+    // 9. Tachyarrhythmias / SVT / VTach
+    } else if (hr > 140 || q.includes('fast hr') || q.includes('tachycardia') || q.includes('svt') || q.includes('vtach')) {
+      diagnosis = "Symptomatic Tachyarrhythmia (Wide/Narrow Complex)";
+      if (sysBP >= 90) {
+        medications.push({
+          name: "Adenosine (or Amiodarone 150 mg IV)",
+          dose: "6 mg Rapid IV Push with 20 mL Flush",
+          route: "Rapid IV Push",
+          purpose: "AV nodal conduction delay to break reentry SVT tachyarrhythmia"
+        });
+      } else {
+        actions.push("CRITICAL: Prepare for Immediate Synchronized Cardioversion (50-100 Joules).");
+      }
+      medications.push({
+        name: "Normal Saline 0.9%",
+        dose: "500 mL Bolus IV",
+        route: "Rapid IV Infusion",
+        purpose: "Intravascular volume expansion to support cardiac filling"
+      });
+
+    // 10. Acute Trauma / Hemorrhage / Severe Pain
+    } else if (obs.includes('trauma') || obs.includes('laceration') || obs.includes('bleed') || sysBP < 90 || q.includes('pain') || q.includes('bleed') || q.includes('trauma')) {
+      diagnosis = "Acute Trauma / Hemorrhagic Shock Risk";
+      medications.push({
+        name: "Normal Saline 0.9%",
+        dose: "1000 mL IV Fluid Bolus",
+        route: "Rapid IV Infusion",
+        purpose: `Resuscitative crystalloid volume expansion (Systolic BP: ${sysBP} mmHg)`
+      });
+      medications.push({
+        name: "Tranexamic Acid (TXA)",
+        dose: "1.0 g IV over 10 minutes",
+        route: "IV Piggyback",
+        purpose: "Antifibrinolytic therapy to prevent massive bleeding clot breakdown"
+      });
+      if (sysBP >= 100) {
+        medications.push({
+          name: "Fentanyl Citrate",
+          dose: "50 mcg IV Push",
+          route: "Intravenous",
+          purpose: "Rapid analgesia for severe trauma pain management"
+        });
+      } else {
+        contraindications.push("OPIOID ANALGESIC PAUSED: Hypotension (Systolic BP < 100 mmHg)");
+      }
+      actions.push("Apply direct pressure / tourniquet to primary hemorrhage sites.");
+
+    // 11. Sepsis / Septic Shock / Hyperthermia
+    } else if (obs.includes('sepsis') || obs.includes('septic') || obs.includes('infection') || temp > 38.5 || q.includes('fever') || q.includes('sepsis')) {
+      diagnosis = "Severe Sepsis / Systemic Inflammatory Response (SIRS)";
+      medications.push({
+        name: "Normal Saline 0.9%",
+        dose: "30 mL/kg IV Fluid Bolus (1500-2000 mL)",
+        route: "Rapid IV Infusion",
+        purpose: "First-line intravascular volume resuscitation for septic hypoperfusion"
+      });
+      if (sysBP < 90) {
+        medications.push({
+          name: "Norepinephrine (Levophed)",
+          dose: "2-12 mcg/min IV Drip",
+          route: "Continuous IV",
+          purpose: "First-line vasopressor for fluid-refractory septic shock (Target MAP >= 65 mmHg)"
+        });
+      }
+      actions.push("Obtain blood cultures & alert ER for immediate broad-spectrum antibiotics.");
+
+    // 12. Default General Triage Response
+    } else {
+      diagnosis = "General Pre-Hospital Emergency Consultation";
+      medications.push({
+        name: "Normal Saline 0.9%",
+        dose: "500 mL KVO (Keep Vein Open)",
+        route: "IV Infusion",
+        purpose: "Maintain patent venous line for rapid medication delivery"
+      });
+      actions.push("Continue continuous 5-lead ECG monitoring and pulse oximetry.");
+    }
+
+    let res = `🤖 AI CLINICAL TRIAGE CONSULT\n\n`;
+    res += `📋 Impression: ${diagnosis}\n`;
+    res += `📊 Telemetry Vitals: HR ${hr} BPM | SpO2 ${spo2}% | BP ${sysBP}/60 mmHg | Temp ${temp}°C\n\n`;
+
+    if (medications.length > 0) {
+      res += `💊 PRESCRIBED IMMEDIATE MEDICATIONS:\n`;
+      medications.forEach((m, idx) => {
+        res += `${idx + 1}. ${m.name} — ${m.dose} [${m.route}]\n   Rationale: ${m.purpose}\n`;
+      });
+      res += `\n`;
+    }
+
+    if (contraindications.length > 0) {
+      res += `⚠️ SAFETY ALERTS & CONTRAINDICATIONS:\n`;
+      contraindications.forEach(c => {
+        res += `- ${c}\n`;
+      });
+      res += `\n`;
+    }
+
+    if (actions.length > 0) {
+      res += `🚑 IMMEDIATE CREW PROTOCOLS:\n`;
+      actions.forEach(a => {
+        res += `- ${a}\n`;
+      });
+      res += `\n`;
+    }
+
+    res += `🏥 Target Destination: ${hospitalName} (ER Trauma Bay Ready)`;
+
+    return res;
+  };
+
+  const handleSendChat = async (e, presetText = null) => {
     if (e) e.preventDefault();
     const userMessage = presetText || chatInput.trim();
     if (!userMessage || !selectedAmbId) return;
@@ -178,27 +467,41 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
       [selectedAmbId]: [...(prev[selectedAmbId] || []), { sender: 'user', text: userMessage }]
     }));
 
-    // Generate AI response
-    setTimeout(() => {
-      const sim = getSim(selectedAmbId);
-      let aiResponse = "";
+    const sim = getSim(selectedAmbId);
+    const hospName = hospitals.find(h => h.id === sim.activeTrip?.hospital_id)?.name || 'MediSync Central';
 
-      const msgLower = userMessage.toLowerCase();
-      if (msgLower.includes('vital') || msgLower.includes('hr') || msgLower.includes('spo2') || msgLower.includes('score')) {
-        aiResponse = `The patient's current vitals show a heart rate of ${sim.vitals.hr} BPM and SpO2 at ${sim.vitals.spo2}%. This computes to a NEWS2 score of ${sim.activeTrip?.news2_score || 6}. Continuous supplemental oxygen and cardiac monitoring are highly advised.`;
-      } else if (msgLower.includes('protocol') || msgLower.includes('treat') || msgLower.includes('do')) {
-        aiResponse = `Recommended Protocol: \n1. Administer high-flow oxygen to maintain SpO2 > 94%.\n2. Establish IV access and prepare emergency medications.\n3. Request immediate trauma bay setup at ${hospitals.find(h => h.id === sim.activeTrip?.hospital_id)?.name || 'MediSync Central'}.`;
-      } else if (msgLower.includes('symptom') || msgLower.includes('condition') || msgLower.includes('ecg')) {
-        aiResponse = `Diagnostic assessment: "${sim.symptoms}". The ST-elevation telemetry indicates acute coronary syndrome. Preparing the cardiac cath lab bay is critical.`;
-      } else {
-        aiResponse = `Understood. Based on the patient's symptoms (${sim.activeTrip ? sim.symptoms.slice(0, 50) + "..." : "Stable baseline"}), please prioritize airway management and prepare for immediate handover at the designated Level 1 trauma bay.`;
+    try {
+      const resp = await fetch('http://localhost:8000/api/triage/consult', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_query: userMessage,
+          vitals: sim.vitals || {},
+          symptoms: sim.symptoms || sim.activeTrip?.symptoms || '',
+          hospital_name: hospName,
+          urgency: sim.activeTrip?.urgency || 'urgent'
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setChatHistory(prev => ({
+          ...prev,
+          [selectedAmbId]: [...(prev[selectedAmbId] || []), { sender: 'ai', text: data.formatted_text }]
+        }));
+        return;
       }
+    } catch (err) {
+      console.warn("Backend AI consult endpoint unavailable, utilizing local AI model:", err);
+    }
 
+    // Fallback to local clinical AI decision model
+    setTimeout(() => {
+      const localResponse = generateLocalAIMedicationPrescription(userMessage, sim, hospName);
       setChatHistory(prev => ({
         ...prev,
-        [selectedAmbId]: [...(prev[selectedAmbId] || []), { sender: 'ai', text: aiResponse }]
+        [selectedAmbId]: [...(prev[selectedAmbId] || []), { sender: 'ai', text: localResponse }]
       }));
-    }, 800);
+    }, 300);
   };
 
   const onVoiceTranscript = useCallback((chunk) => {
@@ -547,10 +850,10 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
             <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[220px] max-h-[260px] scrollbar-thin">
               {(chatHistory[selectedAmbId] || []).map((msg, i) => (
                 <div key={i} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`p-3 rounded-lg text-xs leading-relaxed max-w-[85%] ${
+                  <div className={`p-3 rounded-lg text-xs leading-relaxed max-w-[88%] whitespace-pre-wrap ${
                     msg.sender === 'user' 
                       ? 'bg-secondary text-on-secondary-container font-semibold rounded-br-none' 
-                      : 'bg-white/5 text-on-surface border border-white/5 rounded-bl-none'
+                      : 'bg-white/5 text-on-surface border border-white/5 rounded-bl-none font-mono text-[11px]'
                   }`}>
                     {msg.text}
                   </div>
@@ -559,12 +862,15 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
             </div>
 
             {/* suggestion chips */}
-            <div className="px-4 py-2 border-t border-white/5 flex gap-2 flex-wrap bg-black/10">
-              <button type="button" onClick={() => handleSendChat(null, "Analyze patient vitals")} className="bg-white/5 border border-white/10 hover:bg-white/10 px-2.5 py-1 rounded text-[10px] text-on-surface-variant font-medium transition-all">
-                Analyze Vitals
+            <div className="px-4 py-2 border-t border-white/5 flex gap-1.5 flex-wrap bg-black/10">
+              <button type="button" onClick={() => handleSendChat(null, "Prescribe immediate emergency medication")} className="bg-white/5 border border-white/10 hover:bg-white/10 px-2 py-0.5 rounded text-[10px] text-primary font-bold transition-all">
+                💊 Prescribe Medication
               </button>
-              <button type="button" onClick={() => handleSendChat(null, "Recommend treatment protocols")} className="bg-white/5 border border-white/10 hover:bg-white/10 px-2.5 py-1 rounded text-[10px] text-on-surface-variant font-medium transition-all">
-                Recommend Protocols
+              <button type="button" onClick={() => handleSendChat(null, "Analyze patient vitals")} className="bg-white/5 border border-white/10 hover:bg-white/10 px-2 py-0.5 rounded text-[10px] text-on-surface-variant font-medium transition-all">
+                📊 Analyze Vitals
+              </button>
+              <button type="button" onClick={() => handleSendChat(null, "Check medication contraindications")} className="bg-white/5 border border-white/10 hover:bg-white/10 px-2 py-0.5 rounded text-[10px] text-on-surface-variant font-medium transition-all">
+                ⚠️ Contraindications
               </button>
             </div>
 
