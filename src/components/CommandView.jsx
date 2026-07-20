@@ -40,12 +40,17 @@ export default function CommandView({ socket, ambulances, hospitals, trips }) {
     const L = window.L;
     if (!mapRef.current) {
       mapRef.current = L.map(mapContainerRef.current, { center: [15.852, 74.504], zoom: 13, zoomControl: false, attributionControl: false });
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(mapRef.current);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(mapRef.current);
     }
     const map = mapRef.current;
 
     Object.keys(markersRef.current).forEach(id => {
-      const remains = hospitals.some(h => h.id === id) || ambulances.some(a => a.id === id);
+      const isHospital = id.startsWith('hosp-');
+      const isAmb = id.startsWith('amb-');
+      const isPatient = id.startsWith('patient-');
+      const remains = hospitals.some(h => h.id === id) 
+                   || ambulances.some(a => a.id === id)
+                   || (isPatient && trips.some(t => `patient-${t.id}` === id && t.live_status === 'enroute'));
       if (!remains) { map.removeLayer(markersRef.current[id]); delete markersRef.current[id]; }
     });
 
@@ -70,6 +75,22 @@ export default function CommandView({ socket, ambulances, hospitals, trips }) {
       }
     });
 
+    trips.filter(t => t.live_status === 'enroute').forEach(t => {
+      const amb = ambulances.find(a => a.id === t.ambulance_id);
+      const markerId = `patient-${t.id}`;
+      if (amb && amb.status === 'dispatched' && t.patient_lat && t.patient_lng) {
+        if (!markersRef.current[markerId]) {
+          const htmlIcon = L.divIcon({ html: `<div class="map-marker-pulse" style="background-color: #f59e0b; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px #f59e0b;"><div style="width: 4px; height: 4px; background: white; border-radius: 50%; margin: auto; margin-top: 3px;"></div></div>`, className: '', iconSize: [12, 12], iconAnchor: [6, 6] });
+          markersRef.current[markerId] = L.marker([t.patient_lat, t.patient_lng], { icon: htmlIcon }).bindPopup(`<strong>Patient Pickup Location</strong><br/>Name: ${t.patient_name}`).addTo(map);
+        }
+      } else {
+        if (markersRef.current[markerId]) {
+          map.removeLayer(markersRef.current[markerId]);
+          delete markersRef.current[markerId];
+        }
+      }
+    });
+
     Object.keys(routesRef.current).forEach(tripId => {
       if (!trips.some(t => t.id === tripId && t.live_status === 'enroute')) { map.removeLayer(routesRef.current[tripId]); delete routesRef.current[tripId]; }
     });
@@ -78,13 +99,29 @@ export default function CommandView({ socket, ambulances, hospitals, trips }) {
       const amb = ambulances.find(a => a.id === t.ambulance_id);
       const hosp = hospitals.find(h => h.id === t.hospital_id);
       if (amb && hosp) {
-        const cacheKey = `${t.id}-${hosp.id}`;
-        if (!mapRoutes[cacheKey]) {
-          const coords = await fetchOSRMRoute(t.id, amb, hosp);
-          setMapRoutes(prev => ({ ...prev, [cacheKey]: coords }));
-          return;
+        let pathCoords;
+        if (amb.status === 'dispatched' && t.patient_lat && t.patient_lng) {
+          const cacheKey = `${t.id}-pickup-${hosp.id}`;
+          if (!mapRoutes[cacheKey]) {
+            const start = amb;
+            const pts1 = await fetchOSRMRoute(t.id, start, { lat: t.patient_lat, lng: t.patient_lng });
+            const pts2 = await fetchOSRMRoute(t.id, { lat: t.patient_lat, lng: t.patient_lng }, hosp);
+            const combined = [...pts1, ...pts2];
+            setMapRoutes(prev => ({ ...prev, [cacheKey]: combined }));
+            return;
+          }
+          pathCoords = mapRoutes[cacheKey];
+        } else {
+          const cacheKey = `${t.id}-${hosp.id}`;
+          if (!mapRoutes[cacheKey]) {
+            const start = amb;
+            const coords = await fetchOSRMRoute(t.id, start, hosp);
+            setMapRoutes(prev => ({ ...prev, [cacheKey]: coords }));
+            return;
+          }
+          pathCoords = mapRoutes[cacheKey];
         }
-        const pathCoords = mapRoutes[cacheKey];
+
         const hasClearance = trafficClearanceActive[t.id];
         const color = hasClearance ? '#4edea3' : (t.urgency === 'critical' ? '#ef4444' : t.urgency === 'urgent' ? '#f59e0b' : '#10b981');
         const dashArray = hasClearance ? '' : '8, 8';

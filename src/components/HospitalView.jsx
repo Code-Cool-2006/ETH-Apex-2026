@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { ShieldAlert, Hospital, Heart, Thermometer, User, Clock, AlertTriangle, Layers, Navigation, ChevronRight, Activity, Plus, Minus, Radar, Users, Send } from 'lucide-react';
+import FaceScanner from '../utilities/scanner';
 
 function RadarCanvas() {
   const canvasRef = useRef(null);
@@ -84,6 +85,14 @@ function RadarCanvas() {
 }
 
 export default function HospitalView({ socket, socketConnected, ambulances, hospitals, trips, setHospitals, refreshHospitals, mapFocus, onAcceptTrip }) {
+  const [isAuthorized, setIsAuthorized] = useState(() => {
+    const remaining = sessionStorage.getItem('face_id_auth_visits_remaining');
+    if (remaining) {
+      const count = parseInt(remaining, 10);
+      if (count > 0) return true;
+    }
+    return false;
+  });
   const [selectedTripId, setSelectedTripId] = useState(null);
   const [liveTelemetry, setLiveTelemetry] = useState({});
   const [vitalsHistory, setVitalsHistory] = useState({});
@@ -266,7 +275,7 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
     if (!window.L || !mapContainerRef.current) return;
     if (!mapRef.current) {
       mapRef.current = window.L.map(mapContainerRef.current, { center: [15.852, 74.504], zoom: 13, zoomControl: true, attributionControl: false });
-      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(mapRef.current);
+      window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(mapRef.current);
     }
     const L = window.L;
     const map = mapRef.current;
@@ -274,7 +283,10 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
     Object.keys(markersRef.current).forEach(id => {
       const isHospital = id.startsWith('hosp-');
       const isAmb = id.startsWith('amb-');
-      const remains = (isHospital && hospitals.some(h => h.id === id)) || (isAmb && ambulances.some(a => a.id === id));
+      const isPatient = id.startsWith('patient-');
+      const remains = (isHospital && hospitals.some(h => h.id === id)) 
+                   || (isAmb && ambulances.some(a => a.id === id))
+                   || (isPatient && trips.some(t => `patient-${t.id}` === id && t.live_status === 'enroute'));
       if (!remains) { map.removeLayer(markersRef.current[id]); delete markersRef.current[id]; }
     });
 
@@ -292,8 +304,8 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
     ambulances.forEach(a => {
       const activeTripInfo = trips.find(t => t.ambulance_id === a.id && t.live_status === 'enroute');
       const liveData = activeTripInfo ? liveTelemetry[activeTripInfo.id] : null;
-      const lat = liveData ? liveData.location.lat : a.lat;
-      const lng = liveData ? liveData.location.lng : a.lng;
+      const lat = a.lat;
+      const lng = a.lng;
       const urgency = liveData ? liveData.triage.urgency : 'stable';
       const markerColor = a.status === 'idle' ? '#6b7280' : urgency === 'critical' ? '#ef4444' : urgency === 'urgent' ? '#f59e0b' : '#10b981';
 
@@ -309,6 +321,22 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
       }
     });
 
+    trips.filter(t => t.live_status === 'enroute').forEach(t => {
+      const amb = ambulances.find(a => a.id === t.ambulance_id);
+      const markerId = `patient-${t.id}`;
+      if (amb && amb.status === 'dispatched' && t.patient_lat && t.patient_lng) {
+        if (!markersRef.current[markerId]) {
+          const htmlIcon = L.divIcon({ html: `<div class="map-marker-pulse" style="background-color: #f59e0b; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px #f59e0b;"><div style="width: 4px; height: 4px; background: white; border-radius: 50%; margin: auto; margin-top: 3px;"></div></div>`, className: 'custom-patient-marker', iconSize: [14, 14], iconAnchor: [7, 7] });
+          markersRef.current[markerId] = L.marker([t.patient_lat, t.patient_lng], { icon: htmlIcon }).bindPopup(`<strong>Patient Pickup Location</strong><br/>Name: ${t.patient_name}`).addTo(map);
+        }
+      } else {
+        if (markersRef.current[markerId]) {
+          map.removeLayer(markersRef.current[markerId]);
+          delete markersRef.current[markerId];
+        }
+      }
+    });
+
     Object.keys(routesRef.current).forEach(tripId => {
       const isActive = trips.some(t => t.id === tripId && t.live_status === 'enroute');
       if (!isActive) { map.removeLayer(routesRef.current[tripId]); delete routesRef.current[tripId]; }
@@ -319,14 +347,29 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
       const amb = ambulances.find(a => a.id === t.ambulance_id);
       const hosp = hospitals.find(h => h.id === t.hospital_id);
       if (amb && hosp) {
-        const start = live ? live.location : amb;
-        const cacheKey = `${t.id}-${hosp.id}`;
-        if (!mapRoutes[cacheKey]) {
-          const coords = await fetchOSRMRoute(t.id, start, hosp);
-          setMapRoutes(prev => ({ ...prev, [cacheKey]: coords }));
-          return;
+        let pathCoords;
+        if (amb.status === 'dispatched' && t.patient_lat && t.patient_lng) {
+          const cacheKey = `${t.id}-pickup-${hosp.id}`;
+          if (!mapRoutes[cacheKey]) {
+            const start = amb;
+            const pts1 = await fetchOSRMRoute(t.id, start, { lat: t.patient_lat, lng: t.patient_lng });
+            const pts2 = await fetchOSRMRoute(t.id, { lat: t.patient_lat, lng: t.patient_lng }, hosp);
+            const combined = [...pts1, ...pts2];
+            setMapRoutes(prev => ({ ...prev, [cacheKey]: combined }));
+            return;
+          }
+          pathCoords = mapRoutes[cacheKey];
+        } else {
+          const cacheKey = `${t.id}-${hosp.id}`;
+          if (!mapRoutes[cacheKey]) {
+            const start = amb;
+            const coords = await fetchOSRMRoute(t.id, start, hosp);
+            setMapRoutes(prev => ({ ...prev, [cacheKey]: coords }));
+            return;
+          }
+          pathCoords = mapRoutes[cacheKey];
         }
-        const pathCoords = mapRoutes[cacheKey];
+
         const urgency = live ? live.triage.urgency : t.urgency;
         const color = urgency === 'critical' ? '#ef4444' : urgency === 'urgent' ? '#f59e0b' : '#10b981';
         if (!routesRef.current[t.id]) {
@@ -411,6 +454,36 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
   }, [alarmActive]);
 
   const getUrgencyColor = (u) => u === 'critical' ? 'primary' : u === 'urgent' ? 'tertiary' : 'secondary';
+
+  if (!isAuthorized) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[75vh] w-full glass-panel rounded-2xl p-12 space-y-6 relative overflow-hidden">
+        {/* Background ambient glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px] pointer-events-none" />
+        
+        <div className="text-center max-w-md space-y-3 z-10">
+          <div className="mx-auto w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-2">
+            <ShieldAlert className="text-primary animate-pulse" size={24} />
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight text-on-surface">Secure Authorization Required</h2>
+          <p className="text-sm text-on-surface-variant">
+            Access to the ER Command Center is restricted. Please scan your biometrics to authenticate personnel credentials.
+          </p>
+        </div>
+
+          <FaceScanner onVerify={() => {
+            sessionStorage.setItem('face_id_auth_visits_remaining', '5');
+            setIsAuthorized(true);
+          }} />
+
+        <div className="text-center z-10 pt-4">
+          <span className="text-[10px] text-on-surface-variant font-label-caps tracking-widest uppercase">
+            Protocol: HIPAA Security Standard 45 CFR
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative">

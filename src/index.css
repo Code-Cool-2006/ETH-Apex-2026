@@ -243,3 +243,159 @@ input:checked + .slider-toggle:before {
   max-width: 500px;
   backdrop-filter: blur(10px);
 }
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Face Scanner Styling */
+.face-scanner-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.face-scanner-container {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 16px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #3b82f6;
+}
+
+.face-scanner-container:hover {
+  background: rgba(59, 130, 246, 0.05);
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+  transform: translateY(-2px);
+}
+
+.face-scanner-container.scanning {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.05);
+  border-color: rgba(16, 185, 129, 0.4);
+  box-shadow: 0 0 25px rgba(16, 185, 129, 0.2);
+}
+
+.face-scanner-container.scanning .laser-sweep {
+  animation: laserSweep 1.8s infinite ease-in-out;
+  opacity: 1;
+}
+
+.face-scanner-container.scanning .face-path {
+  stroke-dasharray: 100 10;
+  animation: pathGlow 1s infinite alternate;
+}
+
+.face-scanner-container.scanning .mesh-node {
+  animation: pulseNode 0.6s infinite alternate;
+}
+
+.face-scanner-container.success {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+  border-color: #10b981;
+  box-shadow: 0 0 30px rgba(16, 185, 129, 0.3);
+  transform: scale(1.02);
+}
+
+.face-scanner-container.success .hud-svg {
+  animation: successZoom 0.5s ease-out;
+}
+
+.hud-brackets {
+  width: 150px;
+  height: 150px;
+  transition: transform 0.3s ease;
+}
+
+.hud-svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
+.laser-sweep {
+  position: absolute;
+  top: 25px;
+  left: 25px;
+  right: 25px;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, currentColor, transparent);
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.status-label {
+  margin-top: 16px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  text-align: center;
+  filter: drop-shadow(0 0 2px currentColor);
+}
+
+@keyframes laserSweep {
+  0% {
+    top: 30px;
+    opacity: 0.3;
+  }
+  50% {
+    top: 150px;
+    opacity: 1;
+  }
+  100% {
+    top: 30px;
+    opacity: 0.3;
+  }
+}
+
+@keyframes pathGlow {
+  from {
+    stroke-width: 2px;
+    filter: drop-shadow(0 0 2px currentColor);
+  }
+  to {
+    stroke-width: 2.5px;
+    filter: drop-shadow(0 0 8px currentColor);
+  }
+}
+
+@keyframes pulseNode {
+  from {
+    r: 2.5px;
+    opacity: 0.6;
+  }
+  to {
+    r: 4px;
+    opacity: 1;
+  }
+}
+
+@keyframes successZoom {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}

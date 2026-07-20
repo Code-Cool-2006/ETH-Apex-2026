@@ -28,6 +28,13 @@ ambulance_positions: dict[str, dict] = {}   # unitId → position dict + last_se
 
 GPS_STALE_SECONDS = 30   # mark OFFLINE if no update within this window
 
+@router.post("/api/reset")
+async def reset_telemetry():
+    global inbound_patients, ambulance_positions
+    inbound_patients.clear()
+    ambulance_positions.clear()
+    return {"status": "ok", "message": "In-memory telemetry state reset successfully."}
+
 
 # ── Pydantic incoming-frame schemas ─────────────────────────────────────────
 

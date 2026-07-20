@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Activity, ShieldAlert, Navigation, Database, Radio, Wifi, WifiOff, Volume2, Mic, Settings, Play, Check } from 'lucide-react';
+import { Activity, ShieldAlert, Navigation, Database, Radio, Wifi, WifiOff, Volume2, Mic, Settings, Play, Check, Send } from 'lucide-react';
 
 const SpeechRecognitionAPI =
   typeof window !== "undefined" &&
@@ -92,11 +92,10 @@ function ECGOscilloscope({ heartRate }) {
   return <canvas ref={canvasRef} className="w-full h-24 bg-black/40 rounded-lg border border-white/5" width="400" height="96" />;
 }
 
-export default function AmbulanceView({ socket, socketConnected, ambulances, hospitals, trips, setActiveTrip, refreshTrips, setMapFocus, onNewDispatch }) {
+export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambulances, hospitals, trips, setActiveTrip, refreshTrips, setMapFocus, onNewDispatch, simulations, setSimulations }) {
   const [selectedAmbId, setSelectedAmbId] = useState('');
   const [isOffline, setIsOffline] = useState(false);
   const [offlineBuffer, setOfflineBuffer] = useState([]);
-  const [simulations, setSimulations] = useState({});
   const [scanning, setScanning] = useState(false);
 
   const createDefaultSimState = (ambId) => {
@@ -153,6 +152,55 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
     return interpolatePoints(start, end, 30);
   };
 
+  const [chatInput, setChatInput] = useState('');
+  const [chatHistory, setChatHistory] = useState({
+    'AMB-01': [
+      { sender: 'ai', text: 'Hello! I am your AI Medical Advisor. I am monitoring Rescue 402\'s live telemetry stream. How can I assist with this patient?' }
+    ],
+    'AMB-02': [
+      { sender: 'ai', text: 'Hello! I am your AI Medical Advisor. I am monitoring BLS Unit 12\'s live telemetry stream. How can I assist with this patient?' }
+    ],
+    'AMB-03': [
+      { sender: 'ai', text: 'Hello! I am your AI Medical Advisor. I am monitoring ALS Rescue 08\'s live telemetry stream. How can I assist with this patient?' }
+    ]
+  });
+
+  const handleSendChat = (e, presetText = null) => {
+    if (e) e.preventDefault();
+    const userMessage = presetText || chatInput.trim();
+    if (!userMessage || !selectedAmbId) return;
+
+    if (!presetText) setChatInput('');
+
+    // Append user message
+    setChatHistory(prev => ({
+      ...prev,
+      [selectedAmbId]: [...(prev[selectedAmbId] || []), { sender: 'user', text: userMessage }]
+    }));
+
+    // Generate AI response
+    setTimeout(() => {
+      const sim = getSim(selectedAmbId);
+      let aiResponse = "";
+
+      const msgLower = userMessage.toLowerCase();
+      if (msgLower.includes('vital') || msgLower.includes('hr') || msgLower.includes('spo2') || msgLower.includes('score')) {
+        aiResponse = `The patient's current vitals show a heart rate of ${sim.vitals.hr} BPM and SpO2 at ${sim.vitals.spo2}%. This computes to a NEWS2 score of ${sim.activeTrip?.news2_score || 6}. Continuous supplemental oxygen and cardiac monitoring are highly advised.`;
+      } else if (msgLower.includes('protocol') || msgLower.includes('treat') || msgLower.includes('do')) {
+        aiResponse = `Recommended Protocol: \n1. Administer high-flow oxygen to maintain SpO2 > 94%.\n2. Establish IV access and prepare emergency medications.\n3. Request immediate trauma bay setup at ${hospitals.find(h => h.id === sim.activeTrip?.hospital_id)?.name || 'MediSync Central'}.`;
+      } else if (msgLower.includes('symptom') || msgLower.includes('condition') || msgLower.includes('ecg')) {
+        aiResponse = `Diagnostic assessment: "${sim.symptoms}". The ST-elevation telemetry indicates acute coronary syndrome. Preparing the cardiac cath lab bay is critical.`;
+      } else {
+        aiResponse = `Understood. Based on the patient's symptoms (${sim.activeTrip ? sim.symptoms.slice(0, 50) + "..." : "Stable baseline"}), please prioritize airway management and prepare for immediate handover at the designated Level 1 trauma bay.`;
+      }
+
+      setChatHistory(prev => ({
+        ...prev,
+        [selectedAmbId]: [...(prev[selectedAmbId] || []), { sender: 'ai', text: aiResponse }]
+      }));
+    }, 800);
+  };
+
   const onVoiceTranscript = useCallback((chunk) => {
     if (!selectedAmbId) return;
     setSimulations(prev => {
@@ -163,80 +211,11 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
 
   const { isListening, isSupported, speechError, toggleListening } = useVoiceDictation({ onTranscriptUpdate: onVoiceTranscript });
 
-  // Props reactively feed updates from App.jsx's WebSocket receiver
-
   useEffect(() => {
     if (ambulances && ambulances.length > 0 && !selectedAmbId) {
       setSelectedAmbId(ambulances[0].id);
     }
   }, [ambulances, selectedAmbId]);
-
-  useEffect(() => {
-    if (!trips || trips.length === 0) { setSimulations({}); return; }
-    trips.forEach(async (trip) => {
-      if (trip.live_status === 'enroute' && (!simulations[trip.ambulance_id] || !simulations[trip.ambulance_id].activeTrip)) {
-        const amb = ambulances.find(a => a.id === trip.ambulance_id);
-        const startLoc = { lat: amb?.lat || 15.852, lng: amb?.lng || 74.504 };
-        const hospital = hospitals.find(h => h.id === trip.hospital_id);
-        let pts = hospital ? await fetchOSRMRoute(startLoc, { lat: hospital.lat, lng: hospital.lng }) : [];
-        
-        setSimulations(prev => {
-          if (prev[trip.ambulance_id]?.activeTrip) return prev;
-          return {
-            ...prev,
-            [trip.ambulance_id]: {
-              activeTrip: trip,
-              patientName: trip.patient_name,
-              patientAge: String(trip.patient_age),
-              symptoms: trip.symptoms,
-              vitals: { hr: 142, spo2: 88, systolicBP: 90, temp: 37.2, respRate: 26 },
-              routePoints: pts,
-              currentRouteIndex: 0,
-              isDriving: pts.length > 0,
-              currentLoc: startLoc,
-              speed: 0,
-              heading: 0
-            }
-          };
-        });
-      }
-    });
-  }, [trips, ambulances, hospitals]);
-
-  // Driving Simulation Step Interval
-  useEffect(() => {
-    const driveInterval = setInterval(() => {
-      setSimulations(prev => {
-        const next = { ...prev };
-        let updated = false;
-        Object.keys(next).forEach(ambId => {
-          const sim = next[ambId];
-          if (sim.isDriving && sim.routePoints.length > 0) {
-            const idx = sim.currentRouteIndex;
-            if (idx < sim.routePoints.length - 1) {
-              const nextIdx = idx + 1;
-              const currentPoint = sim.routePoints[idx];
-              const nextPoint = sim.routePoints[nextIdx];
-              let speed = Math.round(45 + Math.random() * 15);
-              let heading = 0;
-              if (nextPoint && currentPoint) {
-                const dy = nextPoint.lat - currentPoint.lat;
-                const dx = Math.cos(Math.PI / 180 * currentPoint.lat) * (nextPoint.lng - currentPoint.lng);
-                heading = Math.round(Math.atan2(dx, dy) * 180 / Math.PI);
-              }
-              next[ambId] = { ...sim, currentRouteIndex: nextIdx, currentLoc: nextPoint, speed, heading };
-              updated = true;
-            } else {
-              next[ambId] = { ...sim, isDriving: false, speed: 0, heading: 0 };
-              updated = true;
-            }
-          }
-        });
-        return updated ? next : prev;
-      });
-    }, 3000);
-    return () => clearInterval(driveInterval);
-  }, []);
 
   const handleOfflineToggle = (e) => {
     setIsOffline(e.target.checked);
@@ -248,6 +227,11 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
     const sim = getSim(selectedAmbId);
     
     const newPatientId = "PT-" + Math.random().toString(36).substr(2, 9).toUpperCase();
+    const hr = sim.vitals.hr;
+    const spo2 = sim.vitals.spo2;
+    const localUrgency = (hr > 120 || spo2 < 90) ? 'critical' : (hr > 100 || spo2 < 95) ? 'urgent' : 'stable';
+    const localScore = localUrgency === 'critical' ? 6 : 2;
+
     const patientData = {
       id: newPatientId,
       name: sim.patientName,
@@ -373,6 +357,41 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       
+      {/* Ambulance Cards Selector Grid */}
+      <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        {ambulances.map(a => {
+          const sim = getSim(a.id);
+          const isActive = selectedAmbId === a.id;
+          const isEnroute = !!sim.activeTrip;
+          return (
+            <div 
+              key={a.id}
+              onClick={() => setSelectedAmbId(a.id)}
+              className={`glass-panel rounded-xl p-5 cursor-pointer transition-all border-l-4 ${
+                isActive ? 'border-primary ring-1 ring-primary/30 bg-white/[0.03]' : 'border-white/10 hover:bg-white/[0.01]'
+              }`}
+            >
+              <div className="flex justify-between items-start mb-2">
+                <h3 className="font-bold text-base text-on-surface">{a.callsign}</h3>
+                <span className={`text-[9px] font-bold font-label-caps px-2 py-0.5 rounded ${
+                  isEnroute ? 'bg-secondary/20 text-secondary border border-secondary/30' : 'bg-surface-container-highest text-on-surface-variant'
+                }`}>
+                  {isEnroute ? 'ENROUTE' : 'IDLE'}
+                </span>
+              </div>
+              {isEnroute ? (
+                <div className="space-y-1 mt-2">
+                  <p className="text-xs text-on-surface-variant font-medium">Patient: {sim.patientName}</p>
+                  <p className="text-[10px] text-primary font-bold uppercase tracking-wider">Active Telemetry Stream</p>
+                </div>
+              ) : (
+                <p className="text-xs text-on-surface-variant mt-2 italic">Ready for dispatch.</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
       {/* ===== Left 8 cols: Active Terminal ===== */}
       <div className="lg:col-span-8 space-y-6">
         
@@ -384,21 +403,10 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
             </div>
             <div>
               <div className="text-[10px] text-on-surface-variant font-label-caps uppercase">EMT TRANSCRIPTION HUB</div>
-              <h2 className="text-lg font-bold">Active Dispatch Console</h2>
+              <h2 className="text-lg font-bold">{ambulances.find(a => a.id === selectedAmbId)?.callsign || 'Rescue Unit'} Console</h2>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {/* Unit Selector */}
-            <select
-              value={selectedAmbId}
-              onChange={(e) => setSelectedAmbId(e.target.value)}
-              className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary/50 outline-none cursor-pointer"
-            >
-              {ambulances.map(a => (
-                <option key={a.id} value={a.id}>{a.callsign} ({simulations[a.id]?.activeTrip ? 'ENROUTE' : 'IDLE'})</option>
-              ))}
-            </select>
-
             <div className="flex items-center gap-2">
               <span className="text-xs text-on-surface-variant">Network</span>
               <label className="switch">
@@ -440,12 +448,36 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
                   <span className="w-2 h-2 rounded-[0.75rem] bg-secondary animate-pulse"></span>
                   <span className="font-label-caps text-xs">LIVE ECG / LEAD II</span>
                 </div>
-                <div className="flex items-center gap-4 text-xs font-bold text-primary">
-                  <span>SPO2 {currentSim.vitals.spo2}%</span>
-                  <span>BP {currentSim.vitals.systolicBP}/60</span>
-                </div>
               </div>
               <ECGOscilloscope heartRate={currentSim.vitals.hr} />
+            </div>
+
+            {/* Vitals Cards near ECG */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="glass-panel rounded-xl p-4 flex flex-col justify-between">
+                <span className="text-[10px] text-on-surface-variant font-label-caps uppercase">HEART RATE & SPO2</span>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-primary">{currentSim.vitals.hr}</span>
+                  <span className="text-xs text-on-surface-variant">BPM</span>
+                </div>
+                <span className="text-[10px] text-on-surface-variant mt-1">SpO2: {currentSim.vitals.spo2}%</span>
+              </div>
+              <div className="glass-panel rounded-xl p-4 flex flex-col justify-between">
+                <span className="text-[10px] text-on-surface-variant font-label-caps uppercase">BLOOD PRESSURE</span>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-primary">{currentSim.vitals.systolicBP}/60</span>
+                  <span className="text-xs text-on-surface-variant">mmHg</span>
+                </div>
+                <span className="text-[10px] text-on-surface-variant mt-1">Mean Arterial: Auto</span>
+              </div>
+              <div className="glass-panel rounded-xl p-4 flex flex-col justify-between">
+                <span className="text-[10px] text-on-surface-variant font-label-caps uppercase">TEMPERATURE</span>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-primary">{currentSim.vitals.temp || '37.2'}</span>
+                  <span className="text-xs text-on-surface-variant">°C</span>
+                </div>
+                <span className="text-[10px] text-on-surface-variant mt-1">Core Temp Link: Active</span>
+              </div>
             </div>
 
             {/* Transcription dictation */}
@@ -480,10 +512,12 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
         )}
       </div>
 
-      {/* ===== Right 4 cols: Hospital Allocation ===== */}
+      {/* ===== Right 4 cols: Hospital Allocation & Chatbot ===== */}
       <div className="lg:col-span-4 space-y-6">
+        
+        {/* Capability Route */}
         <section className="glass-panel rounded-xl p-5">
-          <h3 className="font-headline-md text-[18px] font-semibold text-on-surface mb-4">ER Capability Route</h3>
+          <h3 className="font-headline-md text-[16px] font-semibold text-on-surface mb-4">ER Capability Route</h3>
           <div className="space-y-3">
             {hospitals.map(h => {
               const isAssigned = currentSim.activeTrip?.hospital_id === h.id;
@@ -501,6 +535,54 @@ export default function AmbulanceView({ socket, socketConnected, ambulances, hos
             })}
           </div>
         </section>
+
+        {/* AI Triage Advisor Chatbot */}
+        {currentSim.activeTrip && (
+          <section className="glass-panel rounded-xl flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-white/10 flex items-center gap-2 bg-white/[0.01]">
+              <Radio className="text-secondary animate-pulse" size={16} />
+              <h3 className="font-bold text-sm text-on-surface">AI Triage Advisor</h3>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[220px] max-h-[260px] scrollbar-thin">
+              {(chatHistory[selectedAmbId] || []).map((msg, i) => (
+                <div key={i} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`p-3 rounded-lg text-xs leading-relaxed max-w-[85%] ${
+                    msg.sender === 'user' 
+                      ? 'bg-secondary text-on-secondary-container font-semibold rounded-br-none' 
+                      : 'bg-white/5 text-on-surface border border-white/5 rounded-bl-none'
+                  }`}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* suggestion chips */}
+            <div className="px-4 py-2 border-t border-white/5 flex gap-2 flex-wrap bg-black/10">
+              <button type="button" onClick={() => handleSendChat(null, "Analyze patient vitals")} className="bg-white/5 border border-white/10 hover:bg-white/10 px-2.5 py-1 rounded text-[10px] text-on-surface-variant font-medium transition-all">
+                Analyze Vitals
+              </button>
+              <button type="button" onClick={() => handleSendChat(null, "Recommend treatment protocols")} className="bg-white/5 border border-white/10 hover:bg-white/10 px-2.5 py-1 rounded text-[10px] text-on-surface-variant font-medium transition-all">
+                Recommend Protocols
+              </button>
+            </div>
+
+            {/* Chat Input */}
+            <form onSubmit={handleSendChat} className="p-3 border-t border-white/10 bg-black/20 flex gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Consult advisor..."
+                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-on-surface focus:ring-1 focus:ring-secondary/50 outline-none transition-all"
+              />
+              <button type="submit" className="bg-secondary p-1.5 rounded-lg text-on-secondary-container active:scale-95 transition-all">
+                <Send size={14} />
+              </button>
+            </form>
+          </section>
+        )}
       </div>
     </div>
   );
