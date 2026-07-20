@@ -9,6 +9,7 @@ import SettingsView from './components/SettingsView';
 import LogsView from './components/LogsView';
 import NewDispatchView from './components/NewDispatchView';
 import NotificationsView from './components/NotificationsView';
+import TutorialGuide from './components/TutorialGuide';
 
 const DEFAULT_AMBULANCES = [
   { id: 'AMB-01', callsign: 'Rescue 402', status: 'idle', lat: 15.8566, lng: 74.5097, speed: 0 },
@@ -32,7 +33,16 @@ function App() {
   const [notifications, setNotifications] = useState([]);
   const [notificationHistory, setNotificationHistory] = useState([]);
 
+  const recentNotifsRef = useRef(new Set());
+
   const addNotification = (message, type = 'info') => {
+    // Prevent duplicate notifications firing within a 2-second window (e.g. from React StrictMode dual WebSockets)
+    if (recentNotifsRef.current.has(message)) return;
+    recentNotifsRef.current.add(message);
+    setTimeout(() => {
+      recentNotifsRef.current.delete(message);
+    }, 2000);
+
     const id = Date.now() + Math.random();
     const timestamp = new Date().toLocaleTimeString();
     
@@ -510,9 +520,17 @@ function App() {
             <Bell size={20} />
             <span>Notifications</span>
           </a>
-          <a href="#" className="flex items-center gap-3 px-4 py-2 mx-2 text-on-surface-variant hover:bg-white/5 rounded-lg transition-all font-label-caps text-label-caps">
+          <a 
+            href="#" 
+            onClick={(e) => { 
+              e.preventDefault(); 
+              localStorage.removeItem('tutorial_completed');
+              navigate('/');
+            }}
+            className="flex items-center gap-3 px-4 py-2 mx-2 text-on-surface-variant hover:bg-white/5 rounded-lg transition-all font-label-caps text-label-caps"
+          >
             <HelpCircle size={20} />
-            <span>Support</span>
+            <span>Resume Tour</span>
           </a>
           <a href="#" className="flex items-center gap-3 px-4 py-2 mx-2 text-on-surface-variant hover:bg-white/5 rounded-lg transition-all font-label-caps text-label-caps">
             <LogOut size={20} />
@@ -591,7 +609,7 @@ function App() {
             navigate={navigate} 
           />
         )}
-
+        <TutorialGuide currentPath={currentPath} navigate={navigate} />
       </main>
 
       {/* Toast Notification Container */}
