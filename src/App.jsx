@@ -34,6 +34,26 @@ function App() {
   const [notificationHistory, setNotificationHistory] = useState([]);
 
   const recentNotifsRef = useRef(new Set());
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  useEffect(() => {
+    const unlock = () => {
+      if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance('');
+        window.speechSynthesis.speak(utterance);
+        setAudioUnlocked(true);
+        console.log("[TTS] Speech synthesis audio unlocked.");
+      }
+      window.removeEventListener('click', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+    window.addEventListener('click', unlock);
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('click', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
 
   const addNotification = (message, type = 'info') => {
     // Prevent duplicate notifications firing within a 2-second window (e.g. from React StrictMode dual WebSockets)
@@ -514,6 +534,13 @@ function App() {
           </div>
           <span className="text-[10px] text-on-surface-variant uppercase tracking-widest px-1 font-label-caps">Level 1 Trauma • Unit 04</span>
         </div>
+
+        {!audioUnlocked && (
+          <div className="px-4 py-3 mx-4 mb-6 rounded-lg bg-amber-500/10 border border-amber-500/20 text-center animate-pulse">
+            <span className="text-[10px] font-label-caps text-amber-400 font-bold block">🔊 AUDIO MUTED</span>
+            <span className="text-[9px] text-on-surface-variant leading-tight block mt-1">Click anywhere on this dashboard to enable Voice Alerts.</span>
+          </div>
+        )}
 
         {/* Nav Items */}
         <nav className="flex-1 space-y-1">
