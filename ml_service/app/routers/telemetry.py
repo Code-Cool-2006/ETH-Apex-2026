@@ -493,6 +493,20 @@ async def websocket_endpoint(
                     "data": inbound_patients,
                 }))
 
+            elif msg_type == "COMPLETE_PATIENT":
+                pid = msg.get("data", {}).get("patient_id")
+                if pid:
+                    # Remove the patient from inbound_patients
+                    global inbound_patients
+                    inbound_patients = [p for p in inbound_patients if p.get("id") != pid]
+                    await manager.broadcast(json.dumps({
+                        "type": "UPDATE_PATIENTS",
+                        "data": inbound_patients,
+                    }))
+                    await websocket.send_json({"status": "ok", "info": f"Patient {pid} marked as completed."})
+                else:
+                    await websocket.send_json({"status": "rejected", "error": "Missing patient_id."})
+
             else:
                 await websocket.send_json({"status": "rejected", "error": f"Unknown message type: {msg_type}"})
 

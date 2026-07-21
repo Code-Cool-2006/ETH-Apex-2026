@@ -499,6 +499,13 @@ function App() {
     const hospital = hospitals.find(h => h.id === (trip ? trip.hospital_id : 'HOSP-01'));
     addNotification(`🏥 ${hospital ? hospital.name : 'Hospital'} has taken charge of ${patientName}. Transfer complete.`, 'info');
 
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "COMPLETE_PATIENT",
+        data: { patient_id: tripId }
+      }));
+    }
+
     setTrips(prev => prev.map(t => t.id === tripId ? { ...t, live_status: 'completed', urgency: 'stable' } : t));
     setActiveTrip(prev => prev && prev.id === tripId ? null : prev);
   };
