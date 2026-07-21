@@ -1,5 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Load env variables from the parent .env file
+ENV_PATH = Path(__file__).parent.parent / ".env"
+load_dotenv(ENV_PATH)
+
 from app.routers import telemetry, alerts, settings, sos
 import app.auth  # noqa: F401 — registers auth module on startup
 

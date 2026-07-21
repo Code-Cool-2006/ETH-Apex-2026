@@ -76,139 +76,190 @@ function App() {
   const navigate = (to) => {
     window.history.pushState({}, '', to);
     setCurrentPath(to);
-
-    if (to !== '/') {
-      const remainingStr = sessionStorage.getItem('face_id_auth_visits_remaining');
-      if (remainingStr) {
-        const remaining = parseInt(remainingStr, 10);
-        if (remaining > 0) {
-          sessionStorage.setItem('face_id_auth_visits_remaining', String(remaining - 1));
-        }
-      }
-    }
   };
 
-  // Connect to FastAPI WebSockets
+  // Connect to FastAPI WebSockets with auto-reconnect
   useEffect(() => {
     const token = 'ems_device_token_UNIT_A42'; // Auth token registered in auth.py
-    
     const WS_URL = window.location.hostname === 'localhost' ? 'ws://localhost:8000' : 'wss://eth-apex-2026.onrender.com';
-    // 1. Patient Telemetry Channel
-    const ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
-    wsRef.current = ws;
+    
+    let ws = null;
+    let wsGps = null;
+    let reconnectTimer = null;
+    let isCleanup = false;
 
-    ws.onopen = () => {
-      setSocketConnected(true);
-      console.log("[WS] Connected to Patient Telemetry Channel.");
-    };
+    const connectSockets = () => {
+      if (isCleanup) return;
+      console.log("[WS] Connecting to telemetry sockets...");
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        console.log("[WS] Received message:", msg);
-        if (msg.type === 'INITIAL_STATE') {
-          const loadedTrips = msg.data.map(p => ({
-            id: p.id,
-            ambulance_id: p.ambulanceId || 'AMB-01',
-            ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
-            patient_name: p.name,
-            patient_age: p.age,
-            symptoms: p.symptoms,
-            urgency: p.urgency,
-            live_status: p.status === 'Completed' ? 'completed' : 'enroute',
-            hospital_id: p.assignedHospital?.id || 'HOSP-01',
-            news2_score: p.vitals?.news2Score || 0,
-            patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-            patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-          }));
-          setTrips(loadedTrips);
-          const active = loadedTrips.find(t => t.live_status === 'enroute');
-          if (active) setActiveTrip(active);
-        } else if (msg.type === 'NEW_PATIENT_BROADCAST') {
-          addNotification(`🚨 Ambulance ${msg.data.ambulanceCallsign || 'Rescue Unit'} dispatched to patient ${msg.data.name}'s location.`, 'info');
-          const newTrip = {
-            id: msg.data.id,
-            ambulance_id: msg.data.ambulanceId || 'AMB-01',
-            ambulance_callsign: msg.data.ambulanceCallsign || 'Rescue 402',
-            patient_name: msg.data.name,
-            patient_age: msg.data.age,
-            symptoms: msg.data.symptoms,
-            urgency: msg.data.urgency,
-            live_status: 'enroute',
-            hospital_id: msg.data.assignedHospital?.id || 'HOSP-01',
-            news2_score: msg.data.vitals?.news2Score || 0,
-            patient_lat: msg.data.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-            patient_lng: msg.data.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-          };
-          setTrips(prev => {
-            if (prev.some(t => t.id === newTrip.id)) return prev;
-            return [...prev, newTrip];
-          });
-          setActiveTrip(newTrip);
-        } else if (msg.type === 'UPDATE_PATIENTS') {
-          const loadedTrips = msg.data.map(p => ({
-            id: p.id,
-            ambulance_id: p.ambulanceId || 'AMB-01',
-            ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
-            patient_name: p.name,
-            patient_age: p.age,
-            symptoms: p.symptoms,
-            urgency: p.urgency,
-            live_status: p.status === 'Completed' ? 'completed' : 'enroute',
-            hospital_id: p.assignedHospital?.id || 'HOSP-01',
-            news2_score: p.vitals?.news2Score || 0,
-            patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-            patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-          }));
-          setTrips(loadedTrips);
-          const active = loadedTrips.find(t => t.live_status === 'enroute');
-          setActiveTrip(active || null);
-        }
-      } catch (err) {
-        console.error("Error parsing telemetry message:", err);
-      }
-    };
+      // 1. Patient Telemetry Channel
+      ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
+      wsRef.current = ws;
 
-    ws.onclose = () => {
-      setSocketConnected(false);
-      console.log("[WS] Disconnected from Patient Telemetry Channel.");
-    };
+      ws.onopen = () => {
+        setSocketConnected(true);
+        console.log("[WS] Connected to Patient Telemetry Channel.");
+      };
 
-    // 2. GPS Fleet Tracking Channel
-
-    const wsGps = new WebSocket(`${WS_URL}/ws/gps?token=${token}`);
-    wsGpsRef.current = wsGps;
-
-    wsGps.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'GPS_STATE' || msg.type === 'GPS_BROADCAST') {
-          const gpsMap = {};
-          msg.data.forEach(unit => {
-            gpsMap[unit.unitId] = unit;
-          });
-          setAmbulances(prev => prev.map(amb => {
-            const update = gpsMap[amb.id];
-            if (update) {
-              return {
-                ...amb,
-                lat: update.lat,
-                lng: update.lng,
-                status: update.status ? update.status.toLowerCase() : 'enroute',
-                speed: update.speed || 0
-              };
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          console.log("[WS] Received message:", msg);
+          if (msg.type === 'INITIAL_STATE') {
+            const loadedTrips = msg.data.map(p => ({
+              id: p.id,
+              ambulance_id: p.ambulanceId || 'AMB-01',
+              ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
+              patient_name: p.name,
+              patient_age: p.age,
+              symptoms: p.symptoms,
+              urgency: p.urgency,
+              live_status: p.status === 'Completed' || p.status === 'completed' || p.status === 'Arrived' || p.status === 'arrived' ? 'completed' : (p.status === 'EnRoute' || p.status === 'enroute' || p.status === 'PickedUp' || p.status === 'picked_up') ? 'enroute' : 'pending',
+              hospital_id: p.assignedHospital?.id || 'HOSP-01',
+              news2_score: p.vitals?.news2Score || 0,
+              patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+              patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+            }));
+            setTrips(loadedTrips);
+            const active = loadedTrips.find(t => t.live_status === 'enroute');
+            if (active) setActiveTrip(active);
+          } else if (msg.type === 'NEW_PATIENT_BROADCAST') {
+            addNotification(`🚨 Ambulance ${msg.data.ambulanceCallsign || 'Rescue Unit'} dispatched to patient ${msg.data.name}'s location.`, 'info');
+            const newTrip = {
+              id: msg.data.id,
+              ambulance_id: msg.data.ambulanceId || 'AMB-01',
+              ambulance_callsign: msg.data.ambulanceCallsign || 'Rescue 402',
+              patient_name: msg.data.name,
+              patient_age: msg.data.age,
+              symptoms: msg.data.symptoms,
+              urgency: msg.data.urgency,
+              live_status: msg.data.status === 'Completed' || msg.data.status === 'completed' || msg.data.status === 'Arrived' || msg.data.status === 'arrived' ? 'completed' : (msg.data.status === 'EnRoute' || msg.data.status === 'enroute' || msg.data.status === 'PickedUp' || msg.data.status === 'picked_up') ? 'enroute' : 'pending',
+              hospital_id: msg.data.assignedHospital?.id || 'HOSP-01',
+              news2_score: msg.data.vitals?.news2Score || 0,
+              patient_lat: msg.data.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+              patient_lng: msg.data.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+            };
+            setTrips(prev => {
+              if (prev.some(t => t.id === newTrip.id)) return prev;
+              return [...prev, newTrip];
+            });
+            if (newTrip.live_status === 'enroute') {
+              setActiveTrip(newTrip);
             }
-            return amb;
-          }));
+          } else if (msg.type === 'UPDATE_PATIENTS') {
+            const loadedTrips = msg.data.map(p => ({
+              id: p.id,
+              ambulance_id: p.ambulanceId || 'AMB-01',
+              ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
+              patient_name: p.name,
+              patient_age: p.age,
+              symptoms: p.symptoms,
+              urgency: p.urgency,
+              live_status: p.status === 'Completed' || p.status === 'completed' || p.status === 'Arrived' || p.status === 'arrived' ? 'completed' : (p.status === 'EnRoute' || p.status === 'enroute' || p.status === 'PickedUp' || p.status === 'picked_up') ? 'enroute' : 'pending',
+              hospital_id: p.assignedHospital?.id || 'HOSP-01',
+              news2_score: p.vitals?.news2Score || 0,
+              patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+              patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+            }));
+            setTrips(loadedTrips);
+            const active = loadedTrips.find(t => t.live_status === 'enroute');
+            setActiveTrip(active || null);
+          }
+        } catch (err) {
+          console.error("Error parsing telemetry message:", err);
         }
-      } catch (err) {
-        console.error("Error parsing GPS message:", err);
-      }
+      };
+
+      ws.onclose = () => {
+        setSocketConnected(false);
+        console.log("[WS] Disconnected from Patient Telemetry Channel. Reconnecting...");
+        triggerReconnect();
+      };
+
+      ws.onerror = (err) => {
+        console.warn("[WS] Telemetry channel error:", err);
+      };
+
+      // 2. GPS Fleet Tracking Channel
+      wsGps = new WebSocket(`${WS_URL}/ws/gps?token=${token}`);
+      wsGpsRef.current = wsGps;
+
+      wsGps.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'GPS_STATE' || msg.type === 'GPS_BROADCAST') {
+            const gpsMap = {};
+            msg.data.forEach(unit => {
+              gpsMap[unit.unitId] = unit;
+              
+              // Synchronize Patient Trip Live Status with Ambulance GPS Status updates
+              setTrips(prev => {
+                let tripChanged = false;
+                const nextTrips = prev.map(t => {
+                  if (t.ambulance_id === unit.unitId && t.live_status !== 'completed') {
+                    const newLiveStatus = (unit.status === 'EnRoute' || unit.status === 'enroute' || unit.status === 'PickedUp' || unit.status === 'picked_up') ? 'enroute'
+                                        : (unit.status === 'Arrived' || unit.status === 'completed') ? 'completed'
+                                        : t.live_status;
+                    if (t.live_status !== newLiveStatus) {
+                      tripChanged = true;
+                      if (newLiveStatus === 'enroute') {
+                        addNotification(`🚨 Patient ${t.patient_name} has been picked up by Rescue 402. En route to MediSync Central.`, 'success');
+                      } else if (newLiveStatus === 'completed') {
+                        addNotification(`🏥 Patient ${t.patient_name} arrived at MediSync Central. Transfer complete.`, 'success');
+                      }
+                      return { ...t, live_status: newLiveStatus };
+                    }
+                  }
+                  return t;
+                });
+
+                if (tripChanged) {
+                  const active = nextTrips.find(t => t.live_status === 'enroute');
+                  setActiveTrip(active || null);
+                }
+                return nextTrips;
+              });
+            });
+
+            setAmbulances(prev => prev.map(amb => {
+              const update = gpsMap[amb.id];
+              if (update) {
+                return {
+                  ...amb,
+                  lat: update.lat,
+                  lng: update.lng,
+                  status: update.status ? update.status.toLowerCase() : 'enroute',
+                  speed: update.speed || 0
+                };
+              }
+              return amb;
+            }));
+          }
+        } catch (err) {
+          console.error("Error parsing GPS message:", err);
+        }
+      };
+
+      wsGps.onclose = () => {
+        console.log("[WS GPS] GPS Channel closed.");
+      };
     };
+
+    const triggerReconnect = () => {
+      if (isCleanup) return;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        connectSockets();
+      }, 3000);
+    };
+
+    connectSockets();
 
     return () => {
-      ws.close();
-      wsGps.close();
+      isCleanup = true;
+      clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+      if (wsGps) wsGps.close();
     };
   }, []);
 

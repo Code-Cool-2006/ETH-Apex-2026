@@ -743,6 +743,19 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
               This terminal is ready for diagnostic stream monitoring. Click "New Dispatch" in the sidebar to configure a patient ticket and launch telemetry.
             </p>
           </div>
+        ) : !(() => {
+          const amb = ambulances.find(a => a.id === selectedAmbId);
+          return amb && (amb.status === 'enroute' || amb.status === 'arrived');
+        })() ? (
+          <div className="glass-panel rounded-xl p-8 text-center space-y-4">
+            <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center border border-white/5 animate-pulse mx-auto">
+              <Activity size={32} className="text-secondary" />
+            </div>
+            <h3 className="text-base font-bold text-on-surface">Ambulance Dispatched</h3>
+            <p className="text-[13px] text-on-surface-variant max-w-xs mx-auto">
+              Rescue 402 is currently en route to the patient location. Live ECG telemetry and triage chat will activate immediately upon patient pickup.
+            </p>
+          </div>
         ) : (
           <div className="space-y-6">
             {/* Live vitals summary / Waveform */}

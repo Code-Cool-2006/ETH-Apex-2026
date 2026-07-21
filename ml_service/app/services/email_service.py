@@ -3,12 +3,6 @@ import os
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
-from dotenv import load_dotenv
-from pathlib import Path
-
-# Load from the backend .env file
-ENV_PATH = Path(__file__).parent.parent.parent / ".env"
-load_dotenv(ENV_PATH)
 
 FROM_NAME = "MediSyncAI Emergency System"
 
@@ -95,39 +89,43 @@ def build_email_html(payload) -> str:
 """
 
 
-def send_alert_email(to_email: str, to_name: str, payload) -> bool:
-    """Send a real HTML email via Gmail SMTP. Reads credentials fresh from env each call."""
-    # Always read credentials fresh (supports hot-reload from settings page)
-    smtp_user = os.environ.get("SMTP_USER", "")
-    smtp_password = os.environ.get("SMTP_PASSWORD", "")
+def send_raw_email(to_email: str, to_name: str, subject: str, html_content: str) -> dict:
+    """Send a real HTML email via Gmail SMTP using current environment variables."""
+    smtp_user = os.environ.get("SMTP_USER", "").strip()
+    smtp_password = os.environ.get("SMTP_PASSWORD", "").strip()
     smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     smtp_port = int(os.environ.get("SMTP_PORT", 587))
 
     if not smtp_user or not smtp_password or smtp_user == "your_gmail@gmail.com":
-        print("[EMAIL] ❌ SMTP credentials not configured — go to /settings in the app to set them up.")
-        return False
+        return {"ok": False, "error": "SMTP credentials not configured."}
 
     try:
-        html_content = build_email_html(payload)
-
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🚨 MediSyncAI Emergency Alert — {payload.urgency} | {payload.patientName}"
+        msg["Subject"] = subject
         msg["From"] = f"{FROM_NAME} <{smtp_user}>"
         msg["To"] = f"{to_name} <{to_email}>"
         msg.attach(MIMEText(html_content, "html"))
 
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as server:
             server.ehlo()
             server.starttls()
             server.login(smtp_user, smtp_password)
             server.sendmail(smtp_user, [to_email], msg.as_string())
 
-        print(f"[EMAIL] ✅ Alert sent to {to_name} <{to_email}>")
-        return True
-
+        return {"ok": True}
     except smtplib.SMTPAuthenticationError:
-        print("[EMAIL] ❌ Authentication failed. Make sure you used an App Password, not your regular Gmail password.")
-        return False
+        return {"ok": False, "error": "SMTP Authentication failed."}
     except Exception as e:
-        print(f"[EMAIL] ❌ Failed to send email: {e}")
-        return False
+        return {"ok": False, "error": str(e)}
+
+
+def send_alert_email(to_email: str, to_name: str, payload) -> bool:
+    """Send a real HTML email via Gmail SMTP. Reads credentials fresh from env each call."""
+    html_content = build_email_html(payload)
+    subject = f"🚨 MediSyncAI Emergency Alert — {payload.urgency} | {payload.patientName}"
+    res = send_raw_email(to_email, to_name, subject, html_content)
+    if not res["ok"]:
+        print(f"[EMAIL] ❌ Failed to send email: {res.get('error')}")
+    else:
+        print(f"[EMAIL] ✅ Alert sent to {to_name} <{to_email}>")
+    return res["ok"]
