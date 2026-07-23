@@ -2,10 +2,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List
 import os
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from datetime import datetime
+from app.services.email_service import send_raw_email
 
 router = APIRouter(prefix="/api/sos", tags=["sos"])
 
@@ -83,33 +81,9 @@ def _send_email(to_email: str, to_name: str, patient_name: str, condition: str, 
     if not to_email:
         return {"ok": False, "error": "No email address"}
 
-    smtp_user = os.environ.get("SMTP_USER", "").strip()
-    smtp_password = os.environ.get("SMTP_PASSWORD", "").strip()
-    smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-    smtp_port = int(os.environ.get("SMTP_PORT", 587))
-
-    if not smtp_user or smtp_user == "your_gmail@gmail.com" or not smtp_password or smtp_password == "your_16_char_app_password":
-        return {"ok": False, "error": "Email not configured — go to Settings tab"}
-
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🚨 EMERGENCY: {patient_name} needs help NOW!"
-        msg["From"] = f"MediSyncAI Emergency <{smtp_user}>"
-        msg["To"] = f"{to_name} <{to_email}>"
-        msg.attach(MIMEText(_build_email_html(patient_name, condition, lat, lng, to_name), "html"))
-
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.sendmail(smtp_user, [to_email], msg.as_string())
-
-        print(f"[SOS EMAIL] ✅ Sent to {to_name} <{to_email}>")
-        return {"ok": True}
-    except smtplib.SMTPAuthenticationError:
-        return {"ok": False, "error": "Gmail auth failed — enter App Password WITHOUT spaces in Settings"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    subject = f"🚨 EMERGENCY: {patient_name} needs help NOW!"
+    html_content = _build_email_html(patient_name, condition, lat, lng, to_name)
+    return send_raw_email(to_email, to_name, subject, html_content)
 
 
 @router.post("/trigger")

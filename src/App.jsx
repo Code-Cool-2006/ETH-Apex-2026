@@ -34,6 +34,26 @@ function App() {
   const [notificationHistory, setNotificationHistory] = useState([]);
 
   const recentNotifsRef = useRef(new Set());
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  useEffect(() => {
+    const unlock = () => {
+      if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance('');
+        window.speechSynthesis.speak(utterance);
+        setAudioUnlocked(true);
+        console.log("[TTS] Speech synthesis audio unlocked.");
+      }
+      window.removeEventListener('click', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+    window.addEventListener('click', unlock);
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('click', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
 
   const addNotification = (message, type = 'info') => {
     // Prevent duplicate notifications firing within a 2-second window (e.g. from React StrictMode dual WebSockets)
@@ -76,22 +96,11 @@ function App() {
   const navigate = (to) => {
     window.history.pushState({}, '', to);
     setCurrentPath(to);
-
-    if (to !== '/') {
-      const remainingStr = sessionStorage.getItem('face_id_auth_visits_remaining');
-      if (remainingStr) {
-        const remaining = parseInt(remainingStr, 10);
-        if (remaining > 0) {
-          sessionStorage.setItem('face_id_auth_visits_remaining', String(remaining - 1));
-        }
-      }
-    }
   };
 
-  // Connect to FastAPI WebSockets
+  // Connect to FastAPI WebSockets with auto-reconnect
   useEffect(() => {
     const token = 'ems_device_token_UNIT_A42'; // Auth token registered in auth.py
-    
     const WS_URL = window.location.hostname === 'localhost' ? 'ws://localhost:8000' : 'wss://eth-apex-2026.onrender.com';
     // 1. Patient Telemetry Channel
     const ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
@@ -167,51 +176,98 @@ function App() {
           const active = loadedTrips.find(t => t.live_status === 'enroute');
           setActiveTrip(active || null);
         }
-      } catch (err) {
-        console.error("Error parsing telemetry message:", err);
-      }
-    };
+      };
 
-    ws.onclose = () => {
-      setSocketConnected(false);
-      console.log("[WS] Disconnected from Patient Telemetry Channel.");
-    };
+      ws.onclose = () => {
+        setSocketConnected(false);
+        console.log("[WS] Disconnected from Patient Telemetry Channel. Reconnecting...");
+        triggerReconnect();
+      };
 
-    // 2. GPS Fleet Tracking Channel
+      ws.onerror = (err) => {
+        console.warn("[WS] Telemetry channel error:", err);
+      };
 
-    const wsGps = new WebSocket(`${WS_URL}/ws/gps?token=${token}`);
-    wsGpsRef.current = wsGps;
+      // 2. GPS Fleet Tracking Channel
+      wsGps = new WebSocket(`${WS_URL}/ws/gps?token=${token}`);
+      wsGpsRef.current = wsGps;
 
-    wsGps.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'GPS_STATE' || msg.type === 'GPS_BROADCAST') {
-          const gpsMap = {};
-          msg.data.forEach(unit => {
-            gpsMap[unit.unitId] = unit;
-          });
-          setAmbulances(prev => prev.map(amb => {
-            const update = gpsMap[amb.id];
-            if (update) {
-              return {
-                ...amb,
-                lat: update.lat,
-                lng: update.lng,
-                status: update.status ? update.status.toLowerCase() : 'enroute',
-                speed: update.speed || 0
-              };
-            }
-            return amb;
-          }));
+      wsGps.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'GPS_STATE' || msg.type === 'GPS_BROADCAST') {
+            const gpsMap = {};
+            msg.data.forEach(unit => {
+              gpsMap[unit.unitId] = unit;
+              
+              // Synchronize Patient Trip Live Status with Ambulance GPS Status updates
+              setTrips(prev => {
+                let tripChanged = false;
+                const nextTrips = prev.map(t => {
+                  if (t.ambulance_id === unit.unitId && t.live_status !== 'completed') {
+                    const newLiveStatus = (unit.status === 'EnRoute' || unit.status === 'enroute' || unit.status === 'PickedUp' || unit.status === 'picked_up') ? 'enroute'
+                                        : (unit.status === 'Arrived' || unit.status === 'completed') ? 'completed'
+                                        : t.live_status;
+                    if (t.live_status !== newLiveStatus) {
+                      tripChanged = true;
+                      if (newLiveStatus === 'enroute') {
+                        addNotification(`🚨 Patient ${t.patient_name} has been picked up by Rescue 402. En route to MediSync Central.`, 'success');
+                      } else if (newLiveStatus === 'completed') {
+                        addNotification(`🏥 Patient ${t.patient_name} arrived at MediSync Central. Transfer complete.`, 'success');
+                      }
+                      return { ...t, live_status: newLiveStatus };
+                    }
+                  }
+                  return t;
+                });
+
+                if (tripChanged) {
+                  const active = nextTrips.find(t => t.live_status === 'enroute');
+                  setActiveTrip(active || null);
+                }
+                return nextTrips;
+              });
+            });
+
+            setAmbulances(prev => prev.map(amb => {
+              const update = gpsMap[amb.id];
+              if (update) {
+                return {
+                  ...amb,
+                  lat: update.lat,
+                  lng: update.lng,
+                  status: update.status ? update.status.toLowerCase() : 'enroute',
+                  speed: update.speed || 0
+                };
+              }
+              return amb;
+            }));
+          }
+        } catch (err) {
+          console.error("Error parsing GPS message:", err);
         }
-      } catch (err) {
-        console.error("Error parsing GPS message:", err);
-      }
+      };
+
+      wsGps.onclose = () => {
+        console.log("[WS GPS] GPS Channel closed.");
+      };
     };
+
+    const triggerReconnect = () => {
+      if (isCleanup) return;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        connectSockets();
+      }, 3000);
+    };
+
+    connectSockets();
 
     return () => {
-      ws.close();
-      wsGps.close();
+      isCleanup = true;
+      clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+      if (wsGps) wsGps.close();
     };
   }, []);
 
@@ -473,6 +529,13 @@ function App() {
           </div>
           <span className="text-[10px] text-on-surface-variant uppercase tracking-widest px-1 font-label-caps">Level 1 Trauma • Unit 04</span>
         </div>
+
+        {!audioUnlocked && (
+          <div className="px-4 py-3 mx-4 mb-6 rounded-lg bg-amber-500/10 border border-amber-500/20 text-center animate-pulse">
+            <span className="text-[10px] font-label-caps text-amber-400 font-bold block">🔊 AUDIO MUTED</span>
+            <span className="text-[9px] text-on-surface-variant leading-tight block mt-1">Click anywhere on this dashboard to enable Voice Alerts.</span>
+          </div>
+        )}
 
         {/* Nav Items */}
         <nav className="flex-1 space-y-1">

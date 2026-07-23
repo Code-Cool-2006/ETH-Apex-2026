@@ -706,66 +706,87 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
 
             <div className="flex-1 overflow-y-auto p-6 space-y-8">
               {currentSelectedTrip && selectedTripLive ? (
-                <>
-                  {/* AI Narrative */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className={`font-label-caps text-xs text-${getUrgencyColor(selectedTripLive.triage.urgency)} font-bold`}>
-                        {selectedTripLive.triage.urgency.toUpperCase()}: {currentSelectedTrip.patient_name}
-                      </span>
-                      <span className="text-[10px] text-on-surface-variant">2m ago</span>
-                    </div>
-                    <div className={`bg-${getUrgencyColor(selectedTripLive.triage.urgency)}/5 border border-${getUrgencyColor(selectedTripLive.triage.urgency)}/10 rounded-lg p-4`}>
-                      <p className="text-sm leading-relaxed text-on-surface">
-                        {selectedTripLive.triage.summary || 'Awaiting AI narrative generation...'}
-                      </p>
-                    </div>
-                    {/* Confidence bar */}
-                    {selectedTripLive.triage.confidence && (
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1 h-1 bg-white/5 rounded-[0.75rem] overflow-hidden">
-                          <div className={`h-full bg-${getUrgencyColor(selectedTripLive.triage.urgency)}`} style={{ width: `${Math.round(Math.max(selectedTripLive.triage.confidence.stable, selectedTripLive.triage.confidence.urgent, selectedTripLive.triage.confidence.critical) * 100)}%` }}></div>
+                (() => {
+                  const amb = ambulances.find(a => a.id === currentSelectedTrip.ambulance_id);
+                  const isPickedUp = amb && (amb.status === 'enroute' || amb.status === 'arrived');
+                  
+                  if (!isPickedUp) {
+                    return (
+                      <div className="flex flex-col items-center justify-center text-center py-12 text-on-surface-variant space-y-4">
+                        <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center border border-white/5 animate-pulse">
+                          <Activity size={32} className="text-secondary" />
                         </div>
-                        <span className="text-[10px] font-label-caps text-on-surface-variant">CONFIDENCE</span>
+                        <div>
+                          <h3 className="font-bold text-on-surface text-base">Ambulance Dispatched</h3>
+                          <p className="text-sm max-w-sm mt-1">Live triage metrics and ECG telemetry will become available once the patient has been successfully picked up by Rescue 402.</p>
+                        </div>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Red Flags */}
-                  {(selectedTripLive.triage.redFlags || []).length > 0 && (
-                    <div className="space-y-2">
-                      <span className="font-label-caps text-[10px] text-on-surface-variant">RED FLAGS</span>
-                      <div className="flex flex-wrap gap-2">
-                        {(selectedTripLive.triage.redFlags || []).map(f => (
-                          <span key={f} className="bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-label-caps flex items-center gap-1">
-                            <AlertTriangle size={8} /> {f}
+                    );
+                  }
+                  
+                  return (
+                    <>
+                      {/* AI Narrative */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className={`font-label-caps text-xs text-${getUrgencyColor(selectedTripLive.triage.urgency)} font-bold`}>
+                            {selectedTripLive.triage.urgency.toUpperCase()}: {currentSelectedTrip.patient_name}
                           </span>
-                        ))}
+                          <span className="text-[10px] text-on-surface-variant">2m ago</span>
+                        </div>
+                        <div className={`bg-${getUrgencyColor(selectedTripLive.triage.urgency)}/5 border border-${getUrgencyColor(selectedTripLive.triage.urgency)}/10 rounded-lg p-4`}>
+                          <p className="text-sm leading-relaxed text-on-surface">
+                            {selectedTripLive.triage.summary || 'Awaiting AI narrative generation...'}
+                          </p>
+                        </div>
+                        {/* Confidence bar */}
+                        {selectedTripLive.triage.confidence && (
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 h-1 bg-white/5 rounded-[0.75rem] overflow-hidden">
+                              <div className={`h-full bg-${getUrgencyColor(selectedTripLive.triage.urgency)}`} style={{ width: `${Math.round(Math.max(selectedTripLive.triage.confidence.stable, selectedTripLive.triage.confidence.urgent, selectedTripLive.triage.confidence.critical) * 100)}%` }}></div>
+                            </div>
+                            <span className="text-[10px] font-label-caps text-on-surface-variant">CONFIDENCE</span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  )}
 
-                  {/* Resource Allocation Status */}
-                  <div className="pt-6 border-t border-white/10">
-                    <h3 className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-widest mb-4">Resource Allocation Status</h3>
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-on-surface">ER Trauma Bay</span>
-                        <span className="text-primary font-bold">{totalBedsAvailable > 2 ? '2/4' : `${Math.min(totalBedsAvailable, 4)}/4`} AVAILABLE</span>
+                      {/* Red Flags */}
+                      {(selectedTripLive.triage.redFlags || []).length > 0 && (
+                        <div className="space-y-2">
+                          <span className="font-label-caps text-[10px] text-on-surface-variant">RED FLAGS</span>
+                          <div className="flex flex-wrap gap-2">
+                            {(selectedTripLive.triage.redFlags || []).map(f => (
+                              <span key={f} className="bg-primary/10 text-primary px-2 py-0.5 rounded text-[10px] font-label-caps flex items-center gap-1">
+                                <AlertTriangle size={8} /> {f}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Resource Allocation Status */}
+                      <div className="pt-6 border-t border-white/10">
+                        <h3 className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-widest mb-4">Resource Allocation Status</h3>
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-on-surface">ER Trauma Bay</span>
+                            <span className="text-primary font-bold">{totalBedsAvailable > 2 ? '2/4' : `${Math.min(totalBedsAvailable, 4)}/4`} AVAILABLE</span>
+                          </div>
+                          <div className="w-full h-1 bg-white/5 rounded-[0.75rem]">
+                            <div className="h-full bg-primary w-1/2 rounded-[0.75rem]"></div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-on-surface">On-call Surgeons</span>
+                            <span className="text-secondary font-bold">04 ACTIVE</span>
+                          </div>
+                          <div className="w-full h-1 bg-white/5 rounded-[0.75rem]">
+                            <div className="h-full bg-secondary w-full rounded-[0.75rem]"></div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="w-full h-1 bg-white/5 rounded-[0.75rem]">
-                        <div className="h-full bg-primary w-1/2 rounded-[0.75rem]"></div>
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-on-surface">On-call Surgeons</span>
-                        <span className="text-secondary font-bold">04 ACTIVE</span>
-                      </div>
-                      <div className="w-full h-1 bg-white/5 rounded-[0.75rem]">
-                        <div className="h-full bg-secondary w-full rounded-[0.75rem]"></div>
-                      </div>
-                    </div>
-                  </div>
-                </>
+                    </>
+                  );
+                })()
               ) : (
                 <div className="flex flex-col items-center justify-center text-center py-12 text-on-surface-variant">
                   <Activity size={32} className="mb-4 opacity-30" />
