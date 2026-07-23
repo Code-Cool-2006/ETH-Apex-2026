@@ -15,10 +15,12 @@ Fixes applied
 import json
 import time
 from typing import Optional
+from urllib import request
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 from pydantic import BaseModel, Field, ValidationError
 from app.services.connection_manager import manager, gps_manager
 from app.auth import verify_ws_token
+from app.utils.predictor import predict_triage
 
 router = APIRouter()
 
@@ -49,15 +51,26 @@ async def triage_consult(payload: TriageConsultPayload):
     q = payload.user_query.lower()
     v = payload.vitals
     hr = v.get("hr", 80)
+    rr = v.get("rr", 16)
     spo2 = v.get("spo2", 98)
     sys_bp = v.get("systolicBP", v.get("bpSys", 120))
     temp = v.get("temp", 37.0)
     obs = payload.symptoms.lower()
+    dia_bp = v.get("diastolicBP", v.get("bpDia", 80))
 
     diagnosis = "Acute Diagnostic Triage Review"
     medications = []
     contraindications = []
     actions = []
+    prediction = predict_triage(
+    hr=hr,
+    rr=rr,
+    spo2=spo2,
+    sbp=sys_bp,
+    dbp=dia_bp,
+    temp=temp,
+    symptoms=payload.symptoms,
+    consciousness="alert")
 
     # 1. Stroke / CVA / Neurological Deficit
     if any(x in obs or x in q for x in ["stroke", "cva", "facial droop", "slurred", "paralysis", "weakness", "numbness", "neuro"]):
@@ -321,13 +334,22 @@ async def triage_consult(payload: TriageConsultPayload):
     lines.append(f"🏥 **Target Destination**: {payload.hospital_name} (ER Trauma Bay Ready)")
 
     return {
-        "status": "ok",
-        "diagnosis": diagnosis,
-        "medications": medications,
-        "contraindications": contraindications,
-        "actions": actions,
-        "formatted_text": "\n".join(lines)
-    }
+    "status": "ok",
+
+    "urgency": prediction["urgency"],
+    "urgency_level": prediction["urgency_level"],
+    "confidence": prediction["confidence"],
+
+    "news2_score": prediction["news2_score"],
+    "shock_index": prediction["shock_index"],
+    "symptom_severity": prediction["symptom_severity"],
+
+    "diagnosis": diagnosis,
+    "medications": medications,
+    "contraindications": contraindications,
+    "actions": actions,
+    "formatted_text": "\n".join(lines)
+}
 
 
 # ── Pydantic incoming-frame schemas ─────────────────────────────────────────

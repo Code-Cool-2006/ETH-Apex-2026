@@ -102,91 +102,79 @@ function App() {
   useEffect(() => {
     const token = 'ems_device_token_UNIT_A42'; // Auth token registered in auth.py
     const WS_URL = window.location.hostname === 'localhost' ? 'ws://localhost:8000' : 'wss://eth-apex-2026.onrender.com';
-    
-    let ws = null;
-    let wsGps = null;
-    let reconnectTimer = null;
-    let isCleanup = false;
+    // 1. Patient Telemetry Channel
+    const ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
+    wsRef.current = ws;
 
-    const connectSockets = () => {
-      if (isCleanup) return;
-      console.log("[WS] Connecting to telemetry sockets...");
+    ws.onopen = () => {
+      setSocketConnected(true);
+      console.log("[WS] Connected to Patient Telemetry Channel.");
+    };
 
-      // 1. Patient Telemetry Channel
-      ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setSocketConnected(true);
-        console.log("[WS] Connected to Patient Telemetry Channel.");
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          console.log("[WS] Received message:", msg);
-          if (msg.type === 'INITIAL_STATE') {
-            const loadedTrips = msg.data.map(p => ({
-              id: p.id,
-              ambulance_id: p.ambulanceId || 'AMB-01',
-              ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
-              patient_name: p.name,
-              patient_age: p.age,
-              symptoms: p.symptoms,
-              urgency: p.urgency,
-              live_status: p.status === 'Completed' || p.status === 'completed' || p.status === 'Arrived' || p.status === 'arrived' ? 'completed' : (p.status === 'EnRoute' || p.status === 'enroute' || p.status === 'PickedUp' || p.status === 'picked_up') ? 'enroute' : 'pending',
-              hospital_id: p.assignedHospital?.id || 'HOSP-01',
-              news2_score: p.vitals?.news2Score || 0,
-              patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-              patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-            }));
-            setTrips(loadedTrips);
-            const active = loadedTrips.find(t => t.live_status === 'enroute');
-            if (active) setActiveTrip(active);
-          } else if (msg.type === 'NEW_PATIENT_BROADCAST') {
-            addNotification(`🚨 Ambulance ${msg.data.ambulanceCallsign || 'Rescue Unit'} dispatched to patient ${msg.data.name}'s location.`, 'info');
-            const newTrip = {
-              id: msg.data.id,
-              ambulance_id: msg.data.ambulanceId || 'AMB-01',
-              ambulance_callsign: msg.data.ambulanceCallsign || 'Rescue 402',
-              patient_name: msg.data.name,
-              patient_age: msg.data.age,
-              symptoms: msg.data.symptoms,
-              urgency: msg.data.urgency,
-              live_status: msg.data.status === 'Completed' || msg.data.status === 'completed' || msg.data.status === 'Arrived' || msg.data.status === 'arrived' ? 'completed' : (msg.data.status === 'EnRoute' || msg.data.status === 'enroute' || msg.data.status === 'PickedUp' || msg.data.status === 'picked_up') ? 'enroute' : 'pending',
-              hospital_id: msg.data.assignedHospital?.id || 'HOSP-01',
-              news2_score: msg.data.vitals?.news2Score || 0,
-              patient_lat: msg.data.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-              patient_lng: msg.data.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-            };
-            setTrips(prev => {
-              if (prev.some(t => t.id === newTrip.id)) return prev;
-              return [...prev, newTrip];
-            });
-            if (newTrip.live_status === 'enroute') {
-              setActiveTrip(newTrip);
-            }
-          } else if (msg.type === 'UPDATE_PATIENTS') {
-            const loadedTrips = msg.data.map(p => ({
-              id: p.id,
-              ambulance_id: p.ambulanceId || 'AMB-01',
-              ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
-              patient_name: p.name,
-              patient_age: p.age,
-              symptoms: p.symptoms,
-              urgency: p.urgency,
-              live_status: p.status === 'Completed' || p.status === 'completed' || p.status === 'Arrived' || p.status === 'arrived' ? 'completed' : (p.status === 'EnRoute' || p.status === 'enroute' || p.status === 'PickedUp' || p.status === 'picked_up') ? 'enroute' : 'pending',
-              hospital_id: p.assignedHospital?.id || 'HOSP-01',
-              news2_score: p.vitals?.news2Score || 0,
-              patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-              patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-            }));
-            setTrips(loadedTrips);
-            const active = loadedTrips.find(t => t.live_status === 'enroute');
-            setActiveTrip(active || null);
-          }
-        } catch (err) {
-          console.error("Error parsing telemetry message:", err);
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        console.log("[WS] Received message:", msg);
+        if (msg.type === 'INITIAL_STATE') {
+          const loadedTrips = msg.data.map(p => ({
+            id: p.id,
+            ambulance_id: p.ambulanceId || 'AMB-01',
+            ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
+            patient_name: p.name,
+            patient_age: p.age,
+            symptoms: p.symptoms,
+            urgency: p.urgency,
+            live_status: p.status === 'Completed' ? 'completed' : 'enroute',
+            hospital_id: p.assignedHospital?.id || 'HOSP-01',
+            news2_score: p.vitals?.news2Score || 0,
+            vitals: p.vitals || null,
+            patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+            patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+          }));
+          setTrips(loadedTrips);
+          const active = loadedTrips.find(t => t.live_status === 'enroute');
+          if (active) setActiveTrip(active);
+        } else if (msg.type === 'NEW_PATIENT_BROADCAST') {
+          addNotification(`🚨 Ambulance ${msg.data.ambulanceCallsign || 'Rescue Unit'} dispatched to patient ${msg.data.name}'s location.`, 'info');
+          const newTrip = {
+            id: msg.data.id,
+            ambulance_id: msg.data.ambulanceId || 'AMB-01',
+            ambulance_callsign: msg.data.ambulanceCallsign || 'Rescue 402',
+            patient_name: msg.data.name,
+            patient_age: msg.data.age,
+            symptoms: msg.data.symptoms,
+            urgency: msg.data.urgency,
+            live_status: 'enroute',
+            hospital_id: msg.data.assignedHospital?.id || 'HOSP-01',
+            news2_score: msg.data.vitals?.news2Score || 0,
+            vitals: msg.data.vitals || null,
+            patient_lat: msg.data.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+            patient_lng: msg.data.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+          };
+          setTrips(prev => {
+            if (prev.some(t => t.id === newTrip.id)) return prev;
+            return [...prev, newTrip];
+          });
+          setActiveTrip(newTrip);
+        } else if (msg.type === 'UPDATE_PATIENTS') {
+          const loadedTrips = msg.data.map(p => ({
+            id: p.id,
+            ambulance_id: p.ambulanceId || 'AMB-01',
+            ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
+            patient_name: p.name,
+            patient_age: p.age,
+            symptoms: p.symptoms,
+            urgency: p.urgency,
+            live_status: p.status === 'Completed' ? 'completed' : 'enroute',
+            hospital_id: p.assignedHospital?.id || 'HOSP-01',
+            news2_score: p.vitals?.news2Score || 0,
+            vitals: p.vitals || null,
+            patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+            patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+          }));
+          setTrips(loadedTrips);
+          const active = loadedTrips.find(t => t.live_status === 'enroute');
+          setActiveTrip(active || null);
         }
       };
 
@@ -361,6 +349,7 @@ function App() {
 
         setSimulations(prev => {
           if (prev[trip.ambulance_id]?.activeTrip) return prev;
+          const tv = trip.vitals || {};
           return {
             ...prev,
             [trip.ambulance_id]: {
@@ -368,7 +357,13 @@ function App() {
               patientName: trip.patient_name,
               patientAge: String(trip.patient_age),
               symptoms: trip.symptoms,
-              vitals: { hr: 142, spo2: 88, systolicBP: 90, temp: 37.2, respRate: 26 },
+              vitals: {
+                hr: tv.hr ?? 80,
+                spo2: tv.spo2 ?? 98,
+                systolicBP: tv.bpSys ?? 120,
+                temp: tv.temp ?? 37.0,
+                respRate: tv.rr ?? 16
+              },
               routePoints: pts,
               pickupIndex: pts1.length - 1, // index where pickup happens
               currentRouteIndex: 0,
@@ -383,6 +378,16 @@ function App() {
       }
     });
   }, [trips, ambulances, hospitals]);
+
+  const handleAcceptTrip = (tripId) => {
+    const trip = trips.find(t => t.id === tripId);
+    const patientName = trip ? trip.patient_name : 'Patient';
+    const hospital = hospitals.find(h => h.id === (trip ? trip.hospital_id : 'HOSP-01'));
+    addNotification(`🏥 ${hospital ? hospital.name : 'Hospital'} has taken charge of ${patientName}. Transfer complete.`, 'info');
+
+    setTrips(prev => prev.map(t => t.id === tripId ? { ...t, live_status: 'completed', urgency: 'stable' } : t));
+    setActiveTrip(prev => prev && prev.id === tripId ? null : prev);
+  };
 
   // Driving Simulation Step Interval
   useEffect(() => {
@@ -491,23 +496,6 @@ function App() {
         data: patientData
       }));
     }
-  };
-
-  const handleAcceptTrip = (tripId) => {
-    const trip = trips.find(t => t.id === tripId);
-    const patientName = trip ? trip.patient_name : 'Patient';
-    const hospital = hospitals.find(h => h.id === (trip ? trip.hospital_id : 'HOSP-01'));
-    addNotification(`🏥 ${hospital ? hospital.name : 'Hospital'} has taken charge of ${patientName}. Transfer complete.`, 'info');
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: "COMPLETE_PATIENT",
-        data: { patient_id: tripId }
-      }));
-    }
-
-    setTrips(prev => prev.map(t => t.id === tripId ? { ...t, live_status: 'completed', urgency: 'stable' } : t));
-    setActiveTrip(prev => prev && prev.id === tripId ? null : prev);
   };
 
   // Nav links for top header

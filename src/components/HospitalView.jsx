@@ -213,7 +213,19 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
           const amb = ambulances.find(a => a.id === trip.ambulance_id);
           const currentLat = amb ? amb.lat : 15.8566;
           const currentLng = amb ? amb.lng : 74.5097;
-          
+
+          // Use the vitals actually submitted for this patient (from New Dispatch / backend
+          // telemetry) instead of a hardcoded preset, falling back only when truly absent.
+          const tv = trip.vitals || {};
+          const realVitals = {
+            hr: tv.hr ?? 80,
+            spo2: tv.spo2 ?? 98,
+            systolicBP: tv.bpSys ?? 120,
+            temp: tv.temp ?? 37.0,
+            respRate: tv.rr ?? 16,
+            news2Score: trip.news2_score
+          };
+
           const triageResult = {
             urgency: trip.urgency,
             vitalsUrgency: trip.urgency,
@@ -233,14 +245,7 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
                 trip_id: trip.id,
                 ambulance_id: trip.ambulance_id,
                 callsign: trip.ambulance_callsign || 'Rescue Unit',
-                vitals: {
-                  hr: 142,
-                  spo2: 88,
-                  systolicBP: 90,
-                  temp: 37.2,
-                  respRate: 26,
-                  news2Score: trip.news2_score
-                },
+                vitals: realVitals,
                 location: { lat: currentLat, lng: currentLng },
                 speed: 0,
                 heading: 0,
@@ -260,8 +265,8 @@ export default function HospitalView({ socket, socketConnected, ambulances, hosp
             return {
               ...prev,
               [trip.id]: [
-                { hr: 140, spo2: 89, timestamp: new Date().toLocaleTimeString() },
-                { hr: 142, spo2: 88, timestamp: new Date().toLocaleTimeString() }
+                { hr: realVitals.hr, spo2: realVitals.spo2, timestamp: new Date().toLocaleTimeString() },
+                { hr: realVitals.hr, spo2: realVitals.spo2, timestamp: new Date().toLocaleTimeString() }
               ]
             };
           });

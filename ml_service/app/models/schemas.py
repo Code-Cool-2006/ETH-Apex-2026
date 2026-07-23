@@ -21,3 +21,20 @@ class AlertPayload(BaseModel):
     ambulanceLng: float = 0.0
     patientLat: float = 0.0
     patientLng: float = 0.0
+
+
+class TriageRequest(BaseModel):
+
+    heartRate: float
+
+    respiratoryRate: float
+
+    spo2: float
+
+    systolicBP: float
+
+    temperature: float
+
+    symptoms: str
+
+    consciousness: str = "alert"
