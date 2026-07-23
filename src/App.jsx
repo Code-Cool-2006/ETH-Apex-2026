@@ -100,81 +100,93 @@ function App() {
 
   // Connect to FastAPI WebSockets with auto-reconnect
   useEffect(() => {
+    let ws = null;
+    let wsGps = null;
+    let reconnectTimer = null;
+    let isCleanup = false;
+
     const token = 'ems_device_token_UNIT_A42'; // Auth token registered in auth.py
     const WS_URL = window.location.hostname === 'localhost' ? 'ws://localhost:8000' : 'wss://eth-apex-2026.onrender.com';
-    // 1. Patient Telemetry Channel
-    const ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
-    wsRef.current = ws;
 
-    ws.onopen = () => {
-      setSocketConnected(true);
-      console.log("[WS] Connected to Patient Telemetry Channel.");
-    };
+    const connectSockets = () => {
+      if (isCleanup) return;
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        console.log("[WS] Received message:", msg);
-        if (msg.type === 'INITIAL_STATE') {
-          const loadedTrips = msg.data.map(p => ({
-            id: p.id,
-            ambulance_id: p.ambulanceId || 'AMB-01',
-            ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
-            patient_name: p.name,
-            patient_age: p.age,
-            symptoms: p.symptoms,
-            urgency: p.urgency,
-            live_status: p.status === 'Completed' ? 'completed' : 'enroute',
-            hospital_id: p.assignedHospital?.id || 'HOSP-01',
-            news2_score: p.vitals?.news2Score || 0,
-            vitals: p.vitals || null,
-            patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-            patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-          }));
-          setTrips(loadedTrips);
-          const active = loadedTrips.find(t => t.live_status === 'enroute');
-          if (active) setActiveTrip(active);
-        } else if (msg.type === 'NEW_PATIENT_BROADCAST') {
-          addNotification(`🚨 Ambulance ${msg.data.ambulanceCallsign || 'Rescue Unit'} dispatched to patient ${msg.data.name}'s location.`, 'info');
-          const newTrip = {
-            id: msg.data.id,
-            ambulance_id: msg.data.ambulanceId || 'AMB-01',
-            ambulance_callsign: msg.data.ambulanceCallsign || 'Rescue 402',
-            patient_name: msg.data.name,
-            patient_age: msg.data.age,
-            symptoms: msg.data.symptoms,
-            urgency: msg.data.urgency,
-            live_status: 'enroute',
-            hospital_id: msg.data.assignedHospital?.id || 'HOSP-01',
-            news2_score: msg.data.vitals?.news2Score || 0,
-            vitals: msg.data.vitals || null,
-            patient_lat: msg.data.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-            patient_lng: msg.data.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-          };
-          setTrips(prev => {
-            if (prev.some(t => t.id === newTrip.id)) return prev;
-            return [...prev, newTrip];
-          });
-          setActiveTrip(newTrip);
-        } else if (msg.type === 'UPDATE_PATIENTS') {
-          const loadedTrips = msg.data.map(p => ({
-            id: p.id,
-            ambulance_id: p.ambulanceId || 'AMB-01',
-            ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
-            patient_name: p.name,
-            patient_age: p.age,
-            symptoms: p.symptoms,
-            urgency: p.urgency,
-            live_status: p.status === 'Completed' ? 'completed' : 'enroute',
-            hospital_id: p.assignedHospital?.id || 'HOSP-01',
-            news2_score: p.vitals?.news2Score || 0,
-            vitals: p.vitals || null,
-            patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
-            patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
-          }));
-          setTrips(loadedTrips);
-          const active = loadedTrips.find(t => t.live_status === 'enroute');
-          setActiveTrip(active || null);
+      // 1. Patient Telemetry Channel
+      ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setSocketConnected(true);
+        console.log("[WS] Connected to Patient Telemetry Channel.");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          console.log("[WS] Received message:", msg);
+          if (msg.type === 'INITIAL_STATE') {
+            const loadedTrips = msg.data.map(p => ({
+              id: p.id,
+              ambulance_id: p.ambulanceId || 'AMB-01',
+              ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
+              patient_name: p.name,
+              patient_age: p.age,
+              symptoms: p.symptoms,
+              urgency: p.urgency,
+              live_status: p.status === 'Completed' ? 'completed' : 'enroute',
+              hospital_id: p.assignedHospital?.id || 'HOSP-01',
+              news2_score: p.vitals?.news2Score || 0,
+              vitals: p.vitals || null,
+              patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+              patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+            }));
+            setTrips(loadedTrips);
+            const active = loadedTrips.find(t => t.live_status === 'enroute');
+            if (active) setActiveTrip(active);
+          } else if (msg.type === 'NEW_PATIENT_BROADCAST') {
+            addNotification(`🚨 Ambulance ${msg.data.ambulanceCallsign || 'Rescue Unit'} dispatched to patient ${msg.data.name}'s location.`, 'info');
+            const newTrip = {
+              id: msg.data.id,
+              ambulance_id: msg.data.ambulanceId || 'AMB-01',
+              ambulance_callsign: msg.data.ambulanceCallsign || 'Rescue 402',
+              patient_name: msg.data.name,
+              patient_age: msg.data.age,
+              symptoms: msg.data.symptoms,
+              urgency: msg.data.urgency,
+              live_status: 'enroute',
+              hospital_id: msg.data.assignedHospital?.id || 'HOSP-01',
+              news2_score: msg.data.vitals?.news2Score || 0,
+              vitals: msg.data.vitals || null,
+              patient_lat: msg.data.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+              patient_lng: msg.data.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+            };
+            setTrips(prev => {
+              if (prev.some(t => t.id === newTrip.id)) return prev;
+              return [...prev, newTrip];
+            });
+            setActiveTrip(newTrip);
+          } else if (msg.type === 'UPDATE_PATIENTS') {
+            const loadedTrips = msg.data.map(p => ({
+              id: p.id,
+              ambulance_id: p.ambulanceId || 'AMB-01',
+              ambulance_callsign: p.ambulanceCallsign || 'Rescue 402',
+              patient_name: p.name,
+              patient_age: p.age,
+              symptoms: p.symptoms,
+              urgency: p.urgency,
+              live_status: p.status === 'Completed' ? 'completed' : 'enroute',
+              hospital_id: p.assignedHospital?.id || 'HOSP-01',
+              news2_score: p.vitals?.news2Score || 0,
+              vitals: p.vitals || null,
+              patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
+              patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
+            }));
+            setTrips(loadedTrips);
+            const active = loadedTrips.find(t => t.live_status === 'enroute');
+            setActiveTrip(active || null);
+          }
+        } catch (err) {
+          console.error("Error parsing WebSocket message:", err);
         }
       };
 
