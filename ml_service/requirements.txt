@@ -5,3 +5,8 @@ requests
 python-dotenv
 twilio
 pydantic[email]
+pandas
+numpy
+scikit-learn
+joblib
+python-multipart

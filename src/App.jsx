@@ -118,6 +118,7 @@ function App() {
             live_status: p.status === 'Completed' ? 'completed' : 'enroute',
             hospital_id: p.assignedHospital?.id || 'HOSP-01',
             news2_score: p.vitals?.news2Score || 0,
+            vitals: p.vitals || null,
             patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
             patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
           }));
@@ -137,6 +138,7 @@ function App() {
             live_status: 'enroute',
             hospital_id: msg.data.assignedHospital?.id || 'HOSP-01',
             news2_score: msg.data.vitals?.news2Score || 0,
+            vitals: msg.data.vitals || null,
             patient_lat: msg.data.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
             patient_lng: msg.data.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
           };
@@ -157,6 +159,7 @@ function App() {
             live_status: p.status === 'Completed' ? 'completed' : 'enroute',
             hospital_id: p.assignedHospital?.id || 'HOSP-01',
             news2_score: p.vitals?.news2Score || 0,
+            vitals: p.vitals || null,
             patient_lat: p.patient_lat || (15.852 + (Math.random() - 0.5) * 0.015),
             patient_lng: p.patient_lng || (74.504 + (Math.random() - 0.5) * 0.015)
           }));
@@ -290,6 +293,7 @@ function App() {
 
         setSimulations(prev => {
           if (prev[trip.ambulance_id]?.activeTrip) return prev;
+          const tv = trip.vitals || {};
           return {
             ...prev,
             [trip.ambulance_id]: {
@@ -297,7 +301,13 @@ function App() {
               patientName: trip.patient_name,
               patientAge: String(trip.patient_age),
               symptoms: trip.symptoms,
-              vitals: { hr: 142, spo2: 88, systolicBP: 90, temp: 37.2, respRate: 26 },
+              vitals: {
+                hr: tv.hr ?? 80,
+                spo2: tv.spo2 ?? 98,
+                systolicBP: tv.bpSys ?? 120,
+                temp: tv.temp ?? 37.0,
+                respRate: tv.rr ?? 16
+              },
               routePoints: pts,
               pickupIndex: pts1.length - 1, // index where pickup happens
               currentRouteIndex: 0,
@@ -312,6 +322,16 @@ function App() {
       }
     });
   }, [trips, ambulances, hospitals]);
+
+  const handleAcceptTrip = (tripId) => {
+    const trip = trips.find(t => t.id === tripId);
+    const patientName = trip ? trip.patient_name : 'Patient';
+    const hospital = hospitals.find(h => h.id === (trip ? trip.hospital_id : 'HOSP-01'));
+    addNotification(`🏥 ${hospital ? hospital.name : 'Hospital'} has taken charge of ${patientName}. Transfer complete.`, 'info');
+
+    setTrips(prev => prev.map(t => t.id === tripId ? { ...t, live_status: 'completed', urgency: 'stable' } : t));
+    setActiveTrip(prev => prev && prev.id === tripId ? null : prev);
+  };
 
   // Driving Simulation Step Interval
   useEffect(() => {
@@ -420,16 +440,6 @@ function App() {
         data: patientData
       }));
     }
-  };
-
-  const handleAcceptTrip = (tripId) => {
-    const trip = trips.find(t => t.id === tripId);
-    const patientName = trip ? trip.patient_name : 'Patient';
-    const hospital = hospitals.find(h => h.id === (trip ? trip.hospital_id : 'HOSP-01'));
-    addNotification(`🏥 ${hospital ? hospital.name : 'Hospital'} has taken charge of ${patientName}. Transfer complete.`, 'info');
-
-    setTrips(prev => prev.map(t => t.id === tripId ? { ...t, live_status: 'completed', urgency: 'stable' } : t));
-    setActiveTrip(prev => prev && prev.id === tripId ? null : prev);
   };
 
   // Nav links for top header

@@ -97,6 +97,7 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
   const [isOffline, setIsOffline] = useState(false);
   const [offlineBuffer, setOfflineBuffer] = useState([]);
   const [scanning, setScanning] = useState(false);
+  const [loadingAI, setLoadingAI] = useState(false);
 
   const createDefaultSimState = (ambId) => {
     const amb = ambulances.find(a => a.id === ambId);
@@ -471,27 +472,56 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
     const hospName = hospitals.find(h => h.id === sim.activeTrip?.hospital_id)?.name || 'MediSync Central';
 
     try {
+      setLoadingAI(true);
       const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://eth-apex-2026.onrender.com';
       const resp = await fetch(`${API_URL}/api/triage/consult`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+
           user_query: userMessage,
-          vitals: sim.vitals || {},
-          symptoms: sim.symptoms || sim.activeTrip?.symptoms || '',
-          hospital_name: hospName,
-          urgency: sim.activeTrip?.urgency || 'urgent'
+
+          vitals: {
+            hr: sim.vitals.hr,
+            rr: sim.vitals.respRate,
+            spo2: sim.vitals.spo2,
+            systolicBP: sim.vitals.systolicBP,
+            diastolicBP: 60,
+            temp: sim.vitals.temp
+         },
+
+        symptoms: sim.symptoms || sim.activeTrip?.symptoms || "",
+        hospital_name: hospName,
+        urgency: sim.activeTrip?.urgency || "urgent"
         })
       });
       if (resp.ok) {
         const data = await resp.json();
+        setLoadingAI(false);
         setChatHistory(prev => ({
           ...prev,
-          [selectedAmbId]: [...(prev[selectedAmbId] || []), { sender: 'ai', text: data.formatted_text }]
+          [selectedAmbId]: [
+            ...(prev[selectedAmbId] || []),
+            {
+              sender: "ai",
+
+              text: data.formatted_text,
+
+              diagnosis: data.diagnosis,
+              urgency: data.urgency,
+              urgencyLevel: data.urgency_level,
+              confidence: data.confidence,
+              news2: data.news2_score,
+              shock: data.shock_index,
+              severity: data.symptom_severity,
+              medications: data.medications
+            }
+          ]
         }));
         return;
       }
     } catch (err) {
+      setLoadingAI(false);
       console.warn("Backend AI consult endpoint unavailable, utilizing local AI model:", err);
     }
 
@@ -847,6 +877,11 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
               <Radio className="text-secondary animate-pulse" size={16} />
               <h3 className="font-bold text-sm text-on-surface">AI Triage Advisor</h3>
             </div>
+            {loadingAI && (
+              <div className="px-4 py-2 text-xs text-primary animate-pulse">
+                🩺 AI is analyzing patient telemetry...
+              </div>
+            )}
             
             <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[220px] max-h-[260px] scrollbar-thin">
               {(chatHistory[selectedAmbId] || []).map((msg, i) => (
@@ -856,6 +891,46 @@ export default function AmbulanceView({ socket, gpsSocket, socketConnected, ambu
                       ? 'bg-secondary text-on-secondary-container font-semibold rounded-br-none' 
                       : 'bg-white/5 text-on-surface border border-white/5 rounded-bl-none font-mono text-[11px]'
                   }`}>
+                    {msg.sender === "ai" && msg.diagnosis && (
+                      <div className="font-bold text-secondary mb-2">
+                          Diagnosis: {msg.diagnosis}
+                      </div>
+                    )}
+                    {msg.sender === "ai" && msg.confidence && (
+                      <div className="text-[10px] text-primary mb-1">
+                        Confidence: {(msg.confidence * 100).toFixed(1)}%
+                      </div>
+                    )}
+                    {msg.sender === "ai" && msg.news2 !== undefined && (
+                      <div className="text-[10px] text-yellow-400 mb-1">
+                        NEWS2 Score: {msg.news2}
+                      </div>
+                    )}
+                    {msg.sender === "ai" && msg.shock !== undefined && (
+                      <div className="text-[10px] text-red-400 mb-1">
+                        Shock Index: {msg.shock}
+                      </div>
+                    )}
+                    {msg.sender === "ai" && msg.severity !== undefined && (
+                      <div className="text-[10px] text-orange-400 mb-2">
+                        Symptom Severity: {msg.severity}
+                      </div>
+                    )}
+                    {msg.sender === "ai" && msg.urgency && (
+                      <div
+                        className={`inline-block px-2 py-1 rounded text-[10px] font-bold mb-2 ${
+                          msg.urgencyLevel === 1
+                            ? "bg-green-600"
+                            : msg.urgencyLevel === 2
+                            ? "bg-yellow-600"
+                            : msg.urgencyLevel === 3
+                            ? "bg-orange-600"
+                            : "bg-red-600"
+                        }`}
+                      >
+                        {msg.urgency}
+                      </div>
+                    )}
                     {msg.text}
                   </div>
                 </div>
