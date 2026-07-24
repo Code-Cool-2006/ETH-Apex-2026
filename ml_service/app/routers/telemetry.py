@@ -359,7 +359,7 @@ class VitalsPayload(BaseModel):
     spo2: int = Field(..., ge=50,   le=100,   description="SpO2 %")
     bpSys: int= Field(..., ge=40,   le=300,   description="Systolic BP mmHg")
     bpDia: int= Field(..., ge=20,   le=200,   description="Diastolic BP mmHg")
-    temp: float = Field(98.6, ge=50.0, le=115.0, description="Body temp °F")
+    temp: float = Field(37.0, ge=30.0, le=115.0, description="Body temp °C or °F")
 
 
 class InboundPatientFrame(BaseModel):
@@ -519,8 +519,7 @@ async def websocket_endpoint(
                 pid = msg.get("data", {}).get("patient_id")
                 if pid:
                     # Remove the patient from inbound_patients
-                    global inbound_patients
-                    inbound_patients = [p for p in inbound_patients if p.get("id") != pid]
+                    inbound_patients[:] = [p for p in inbound_patients if p.get("id") != pid]
                     await manager.broadcast(json.dumps({
                         "type": "UPDATE_PATIENTS",
                         "data": inbound_patients,

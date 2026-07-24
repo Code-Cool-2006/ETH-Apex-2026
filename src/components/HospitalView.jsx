@@ -85,14 +85,7 @@ function RadarCanvas() {
 }
 
 export default function HospitalView({ socket, socketConnected, ambulances, hospitals, trips, setHospitals, refreshHospitals, mapFocus, onAcceptTrip }) {
-  const [isAuthorized, setIsAuthorized] = useState(() => {
-    const remaining = sessionStorage.getItem('face_id_auth_visits_remaining');
-    if (remaining) {
-      const count = parseInt(remaining, 10);
-      if (count > 0) return true;
-    }
-    return false;
-  });
+  const [isAuthorized, setIsAuthorized] = useState(true);
   const [selectedTripId, setSelectedTripId] = useState(null);
   const [liveTelemetry, setLiveTelemetry] = useState({});
   const [vitalsHistory, setVitalsHistory] = useState({});

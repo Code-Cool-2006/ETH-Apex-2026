@@ -502,6 +502,34 @@ function App() {
   };
 
   const handleNewDispatch = (patientData) => {
+    const newTrip = {
+      id: patientData.id,
+      ambulance_id: patientData.ambulanceId || 'AMB-01',
+      ambulance_callsign: patientData.ambulanceCallsign || 'Rescue 402',
+      patient_name: patientData.name,
+      patient_age: patientData.age,
+      symptoms: patientData.symptoms,
+      urgency: patientData.urgency,
+      live_status: 'enroute',
+      hospital_id: patientData.assignedHospital?.id || 'HOSP-01',
+      news2_score: patientData.vitals?.news2Score || 0,
+      vitals: patientData.vitals || null,
+      patient_lat: 15.852 + (Math.random() - 0.5) * 0.015,
+      patient_lng: 74.504 + (Math.random() - 0.5) * 0.015
+    };
+
+    setTrips(prev => {
+      if (prev.some(t => t.id === newTrip.id)) return prev;
+      return [...prev, newTrip];
+    });
+
+    setAmbulances(prev => prev.map(a => 
+      a.id === newTrip.ambulance_id ? { ...a, status: 'dispatched' } : a
+    ));
+
+    setActiveTrip(newTrip);
+    addNotification(`🚨 Ambulance ${newTrip.ambulance_callsign} dispatched to patient ${newTrip.patient_name}'s location.`, 'info');
+
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: "NEW_PATIENT",

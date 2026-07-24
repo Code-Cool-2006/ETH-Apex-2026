@@ -17,7 +17,7 @@ export default function NewDispatchView({ ambulances, onNewDispatch, navigate })
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!selectedAmbId) return;
+    const targetAmbId = selectedAmbId || ambulances[0]?.id || 'AMB-01';
 
     const newPatientId = "PT-" + Math.random().toString(36).substr(2, 9).toUpperCase();
     const tempCelsius = parseFloat(form.temp) || 37.0;
@@ -39,15 +39,15 @@ export default function NewDispatchView({ ambulances, onNewDispatch, navigate })
         news2Score: form.urgency === 'critical' ? 6 : 2
       },
       assignedHospital: { id: "HOSP-01" },
-      ambulanceId: selectedAmbId,
-      ambulanceCallsign: ambulances.find(a => a.id === selectedAmbId)?.callsign || "Rescue Unit"
+      ambulanceId: targetAmbId,
+      ambulanceCallsign: ambulances.find(a => a.id === targetAmbId)?.callsign || "Rescue Unit"
     };
 
     if (onNewDispatch) {
       onNewDispatch(patientData);
     }
-    // Navigate back to home dashboard
-    navigate('/');
+    // Navigate to Fleet Tracking view to display the en-route unit
+    navigate('/tracking');
   };
 
   const loadPreset = (type) => {
